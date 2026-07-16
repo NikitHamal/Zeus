@@ -1,4 +1,4 @@
-﻿name: Build Zeus Release APK
+name: Build Zeus Release APK
 
 on:
   push:
@@ -36,18 +36,10 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x gradlew
 
-      - name: Decode release keystore
-        env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_FILE }}
-        run: echo "$KEYSTORE_BASE64" | base64 -d > zeus-release.keystore
-
       - name: Build Release APK
         run: ./gradlew assembleRelease --build-cache
         env:
           GRADLE_OPTS: -Dorg.gradle.jvmargs="-Xmx4g -XX:+UseParallelGC -XX:MaxMetaspaceSize=1g" -Dorg.gradle.parallel=true -Dorg.gradle.caching=true
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           GITHUB_OAUTH_CLIENT_ID: ${{ secrets.GITHUB_OAUTH_CLIENT_ID }}
           GITHUB_OAUTH_CLIENT_SECRET: ${{ secrets.GITHUB_OAUTH_CLIENT_SECRET }}
 
