@@ -56,14 +56,12 @@ class TerminalViewModel @Inject constructor(private val gitManager: GitManager, 
                 cmd.startsWith("git push") -> gitManager.push(d, token).fold({ "pushed" }, { "error ${it.message}" })
                 cmd.startsWith("git pull") -> gitManager.pull(d, token).fold({ "pulled" }, { "error ${it.message}" })
                 cmd.startsWith("git fetch") -> gitManager.fetch(d, token).fold({ "fetched" }, { "error ${it.message}" })
-                cmd.startsWith("git branch") && !cmd.contains("checkout") -> gitManager.listLocalBranches(d).getOrDefault(emptyList()).joinToString("
-")
+                cmd.startsWith("git branch") && !cmd.contains("checkout") -> gitManager.listLocalBranches(d).getOrDefault(emptyList()).joinToString("\n")
                 cmd.startsWith("git checkout") -> {
                     val branch = cmd.substringAfter("checkout").trim()
                     gitManager.checkout(d, branch, false).fold({ "checked out $branch" }, { "error ${it.message}" })
                 }
-                cmd.startsWith("git log") -> gitManager.log(d).getOrDefault(emptyList()).joinToString("
-") { "${it.shortHash} ${it.message}" }
+                cmd.startsWith("git log") -> gitManager.log(d).getOrDefault(emptyList()).joinToString("\n") { "${it.shortHash} ${it.message}" }
                 cmd.startsWith("git diff") -> gitManager.diff(d).getOrDefault("no diff")
                 cmd.startsWith("git reset --hard") -> {
                     val hash = cmd.substringAfter("--hard").trim()

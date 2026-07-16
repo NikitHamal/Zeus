@@ -19,7 +19,8 @@ class GitHubApi @Inject constructor(
     private suspend fun token(): String = authManager.getToken() ?: throw IllegalStateException("Not authenticated")
 
     private fun HttpRequestBuilder.auth() {
-        header(HttpHeaders.Authorization, "Bearer ${'$'}{runCatching { kotlinx.coroutines.runBlocking { token() } }.getOrDefault("")}")
+        val tok = runCatching { kotlinx.coroutines.runBlocking { token() } }.getOrDefault("")
+        header(HttpHeaders.Authorization, "Bearer $tok")
         header(HttpHeaders.Accept, "application/vnd.github+json")
     }
 
