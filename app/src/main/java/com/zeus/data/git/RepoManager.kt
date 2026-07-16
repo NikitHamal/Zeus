@@ -17,11 +17,11 @@ class RepoManager @Inject constructor(
     @ApplicationContext private val context: Context,
     private val gitManager: GitManager
 ) {
-    private val baseDir: File get() = File(context.filesDir, "zeus_repos").apply { mkdirs() }
+    private val reposBaseDir: File get() = File(context.filesDir, "zeus_repos").apply { mkdirs() }
 
     suspend fun getLocalRepos(): List<LocalRepo> = withContext(Dispatchers.IO) {
-        if (!baseDir.exists()) return@withContext emptyList()
-        baseDir.listFiles()?.filter { File(it, ".git").exists() }?.map {
+        if (!reposBaseDir.exists()) return@withContext emptyList()
+        reposBaseDir.listFiles()?.filter { File(it, ".git").exists() }?.map {
             val branch = runCatching { gitManager.getCurrentBranch(it) }.getOrDefault("main")
             val remote = runCatching { gitManager.remoteUrl(it) }.getOrNull()
             LocalRepo(name = it.name, path = it.absolutePath, currentBranch = branch, remoteUrl = remote, lastModified = it.lastModified())
@@ -34,7 +34,7 @@ class RepoManager @Inject constructor(
 
     suspend fun importFromSAF(uri: Uri, displayName: String): Result<File> = withContext(Dispatchers.IO) {
         try {
-            val dest = File(baseDir, displayName)
+            val dest = File(reposBaseDir, displayName)
             if (dest.exists()) dest.deleteRecursively()
             dest.mkdirs()
             copyUriRecursively(uri, dest)
@@ -65,5 +65,5 @@ class RepoManager @Inject constructor(
         }
     }
 
-    fun getBaseDir(): File = baseDir
+    fun getBaseDir(): File = reposBaseDir
 }
