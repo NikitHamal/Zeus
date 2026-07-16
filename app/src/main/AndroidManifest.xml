@@ -1,30 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools">
-
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
-    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" tools:ignore="ScopedStorage" />
 
     <application
-        android:name=".ZeusApp"
         android:allowBackup="true"
-        android:icon="@mipmap/ic_launcher"
-        android:roundIcon="@mipmap/ic_launcher_round"
+        android:fullBackupContent="@xml/backup_rules"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:icon="@drawable/ic_zeus"
         android:label="Zeus"
+        android:roundIcon="@drawable/ic_zeus"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Zeus"
-        android:usesCleartextTraffic="false"
-        tools:targetApi="31">
-
+        android:theme="@style/Theme.Zeus">
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:label="Zeus"
-            android:theme="@style/Theme.Zeus"
-            android:windowSoftInputMode="adjustResize">
+            android:launchMode="singleTask">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -36,6 +26,5 @@
                 <data android:scheme="zeus" android:host="oauth" />
             </intent-filter>
         </activity>
-
     </application>
 </manifest>

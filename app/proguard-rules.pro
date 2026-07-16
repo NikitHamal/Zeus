@@ -1,9 +1,5 @@
-
--keep class org.eclipse.jgit.** { *; }
--keep class com.zeus.** { *; }
--keep class org.slf4j.** { *; }
--keep class com.jcraft.jsch.** { *; }
+-keepattributes Signature,InnerClasses,EnclosingMethod
+-keep class kotlinx.serialization.** { *; }
+-keepclassmembers class com.zeus.code.model.** { *; }
 -dontwarn org.eclipse.jgit.**
 -dontwarn org.slf4j.**
--keepattributes *Annotation*
--keepattributes Signature

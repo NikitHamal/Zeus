@@ -1,6 +1,3 @@
 <resources>
     <string name="app_name">Zeus</string>
-    <string name="tagline">Code anywhere. Ship faster.</string>
-    <string name="login_github">Continue with GitHub</string>
-    <string name="dashboard">Dashboard</string>
 </resources>

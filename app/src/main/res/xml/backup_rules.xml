@@ -1,5 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <full-backup-content>
-    <exclude domain="sharedpref" path="secret_datastore." />
-    <exclude domain="database" path="datastore/" />
+    <exclude domain="sharedpref" path="zeus_secure.xml" />
 </full-backup-content>

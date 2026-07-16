@@ -1,10 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <data-extraction-rules>
-    <cloud-backup>
-        <exclude domain="sharedpref" path="secret_datastore."/>
-        <exclude domain="file" path="repos/"/>
-    </cloud-backup>
-    <device-transfer>
-        <exclude domain="sharedpref" path="secret_datastore."/>
-    </device-transfer>
+    <cloud-backup><exclude domain="sharedpref" path="zeus_secure.xml" /></cloud-backup>
+    <device-transfer><exclude domain="sharedpref" path="zeus_secure.xml" /></device-transfer>
 </data-extraction-rules>

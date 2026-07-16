@@ -1,26 +1,10 @@
-﻿# Built artifacts
-*.apk
-*.aab
-*.aar
-dist/
-
-# Gradle
 .gradle/
-build/
-**/build/
-
-# Local properties (never commit)
-local.properties
-keystore.properties
-
-# IDE files
 .idea/
+local.properties
+**/build/
 *.iml
-.vscode/
-
-# Temp / generated
-keystore_base64.txt
-
-# OS files
 .DS_Store
-Thumbs.db
+captures/
+.externalNativeBuild/
+.cxx/
+# The release keystore is intentionally committed for this personal open-source build.
