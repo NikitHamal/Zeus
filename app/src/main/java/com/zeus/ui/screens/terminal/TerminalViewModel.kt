@@ -48,7 +48,7 @@ class TerminalViewModel @Inject constructor(private val gitManager: GitManager, 
                 cmd.startsWith("git status") -> gitManager.status(d).getOrNull()?.toString() ?: "error"
                 cmd.startsWith("git add") -> { gitManager.addAll(d); "added" }
                 cmd.startsWith("git commit") -> {
-                    val msg = cmd.substringAfter("-m").trim().removeSurrounding(""").removeSurrounding("'").ifBlank { "commit via zeus" }
+                    val msg = cmd.substringAfter("-m").trim().removeSurrounding("\"").removeSurrounding("'").ifBlank { "commit via zeus" }
                     val res = gitManager.commit(d, msg, "Zeus User", "zeus@local")
                     res.fold({ "committed $it" }, { "error: ${it.message}" })
                 }
