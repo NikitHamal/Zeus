@@ -186,6 +186,18 @@ class GitService {
     private fun friendlyCloneError(error: Throwable): String {
         val root = rootCause(error)
         val message = root.message.orEmpty()
+        
+        // Detect obfuscated messages (e.g., "H2.a<init>[]" from R8/ProGuard)
+        val isObfuscated = message.isNotEmpty() && (
+            message.contains("<init>") ||
+            message.matches(Regex("^[A-Z][a-z]?[0-9]*\\.[A-Za-z]")) ||
+            (message.length < 20 && !message.any { it.isLetterOrDigit() || it == ' ' || it == '.' || it == ':' })
+        )
+        
+        if (isObfuscated) {
+            return "Git could not clone the repository. Check the URL, network connection, and GitHub access permissions."
+        }
+        
         return when {
             root is TransportException && message.contains("not authorized", true) -> "GitHub rejected the clone. Reconnect GitHub and confirm the app can access this repository."
             root is TransportException && message.contains("authentication", true) -> "GitHub authentication failed. Reconnect GitHub, then try again."
