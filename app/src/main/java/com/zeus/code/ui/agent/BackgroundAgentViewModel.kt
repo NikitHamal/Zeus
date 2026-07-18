@@ -25,6 +25,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -257,7 +258,7 @@ class BackgroundAgentViewModel(application: Application) : AndroidViewModel(appl
     }
 
     private suspend fun pollPairing(pairing: AgentPairingState) {
-        while (isActive && System.currentTimeMillis() < pairing.expiresAt) {
+        while (currentCoroutineContext().isActive && System.currentTimeMillis() < pairing.expiresAt) {
             delay(pairing.intervalSeconds * 1000L)
             try {
                 val result = api.pollPairing(pairing.deviceCode)
