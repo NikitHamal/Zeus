@@ -243,7 +243,8 @@ class GitService {
         classify(error)?.let { reason -> return "$reason\n\n$detail" }
 
         // Chain was opaque; ask GitHub directly what is going on.
-        return when (probeRemote(url, token)) {
+        val probe = probeRemote(url, token)
+        return when (probe) {
             is Probe.Ok ->
                 "GitHub is reachable and reports this repository exists, but the local Git engine failed mid-clone. " +
                     (branch?.let { "Branch '$it' may not exist. " } ?: "") +
