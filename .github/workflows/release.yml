@@ -3,7 +3,7 @@ name: Build and release Zeus
 on:
   workflow_dispatch:
   push:
-    branches: [main, master]
+    branches: ['**']
     paths-ignore:
       - "**/*.md"
 
