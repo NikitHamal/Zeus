@@ -197,13 +197,21 @@ class GitService {
         // Even if message is obfuscated, inspect exception type and stack trace for clues
         if (isObfuscated) {
             val stackTrace = root.stackTrace.joinToString("\n") { it.toString() }
+            val allStackTraces = buildString {
+                var t: Throwable? = error
+                while (t != null) {
+                    append(t.stackTrace.joinToString("\n") { it.toString() })
+                    t = t.cause
+                }
+            }
             return when {
-                root is TransportException -> "GitHub rejected the clone. Reconnect GitHub and confirm the app can access this repository."
-                stackTrace.contains("TransportException", ignoreCase = true) -> "GitHub rejected the clone. Reconnect GitHub and confirm the app can access this repository."
-                stackTrace.contains("IOException", ignoreCase = true) -> "Network error during clone. Check your internet connection and try again."
-                stackTrace.contains("SecurityException", ignoreCase = true) || stackTrace.contains("SSL", ignoreCase = true) -> "A secure connection to GitHub could not be established. Check the device date, network, and certificate settings."
-                stackTrace.contains("FileNotFoundException", ignoreCase = true) || stackTrace.contains("NoSuchFile", ignoreCase = true) -> "Repository or branch not found, or the connected account cannot access it."
-                stackTrace.contains("OutOfMemory", ignoreCase = true) || stackTrace.contains("NoSpace", ignoreCase = true) -> "The device does not have enough free storage for this repository."
+                root is TransportException || allStackTraces.contains("org.eclipse.jgit.errors.TransportException") -> "GitHub rejected the clone. Reconnect GitHub and confirm the app can access this repository."
+                allStackTraces.contains("java.net.SocketTimeoutException") || allStackTraces.contains("java.net.ConnectException") -> "Network error during clone. Check your internet connection and try again."
+                allStackTraces.contains("javax.net.ssl.SSLHandshakeException") || allStackTraces.contains("java.security.cert.CertificateException") -> "A secure connection to GitHub could not be established. Check the device date, network, and certificate settings."
+                allStackTraces.contains("java.io.FileNotFoundException") || allStackTraces.contains("java.nio.file.NoSuchFileException") -> "Repository or branch not found, or the connected account cannot access it."
+                allStackTraces.contains("java.lang.OutOfMemoryError") || allStackTraces.contains("No space left on device") -> "The device does not have enough free storage for this repository."
+                allStackTraces.contains("java.net.UnknownHostException") -> "Could not resolve github.com. Check your DNS and internet connection."
+                allStackTraces.contains("java.net.SocketException") -> "Network socket error during clone. Check your internet connection and firewall settings."
                 else -> "Git could not clone the repository. Check the URL, network connection, and GitHub access permissions."
             }
         }
