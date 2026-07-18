@@ -187,38 +187,38 @@ class GitService {
         val root = rootCause(error)
         val message = root.message.orEmpty()
         
-        // Detect obfuscated messages (e.g., "H2.a<init>[]" from R8/ProGuard)
-        val isObfuscated = message.isNotEmpty() && (
-            message.contains("<init>") ||
-            message.matches(Regex("^[A-Z][a-z]?[0-9]*\\.[A-Za-z]")) ||
-            (message.length < 20 && !message.any { it.isLetterOrDigit() || it == ' ' || it == '.' || it == ':' })
-        )
-        
-        // Even if message is obfuscated, inspect exception type and stack trace for clues
-        if (isObfuscated) {
-            val stackTrace = root.stackTrace.joinToString("\n") { it.toString() }
-            val allStackTraces = buildString {
-                var t: Throwable? = error
-                while (t != null) {
-                    append(t.stackTrace.joinToString("\n") { it.toString() })
-                    t = t.cause
+        // Walk the full exception chain using instanceof checks.
+        // This works even when R8 obfuscates class names in stack traces,
+        // because instanceof operates on actual runtime types, not strings.
+        var current: Throwable? = error
+        while (current != null) {
+            when (current) {
+                is TransportException -> {
+                    val msg = current.message.orEmpty().lowercase()
+                    return when {
+                        msg.contains("not authorized") -> "GitHub rejected the clone. Reconnect GitHub and confirm the app can access this repository."
+                        msg.contains("authentication") -> "GitHub authentication failed. Reconnect GitHub, then try again."
+                        msg.contains("404") -> "Repository not found. Check the URL and ensure you have access."
+                        msg.contains("403") -> "Access denied. Confirm your GitHub token has permission to access this repository."
+                        msg.contains("401") -> "Authentication required. Reconnect GitHub and try again."
+                        else -> "GitHub rejected the clone. Reconnect GitHub and confirm the app can access this repository."
+                    }
                 }
+                is java.net.SocketTimeoutException -> return "The clone timed out. Check the network and try again."
+                is java.net.ConnectException -> return "Network error during clone. Check your internet connection and try again."
+                is java.net.UnknownHostException -> return "Could not resolve github.com. Check your DNS and internet connection."
+                is java.net.SocketException -> return "Network socket error during clone. Check your internet connection and firewall settings."
+                is javax.net.ssl.SSLHandshakeException -> return "A secure connection to GitHub could not be established. Check the device date, network, and certificate settings."
+                is java.security.cert.CertificateException -> return "A secure connection to GitHub could not be established. Check the device date, network, and certificate settings."
+                is java.io.FileNotFoundException -> return "Repository or branch not found, or the connected account cannot access it."
+                is java.nio.file.NoSuchFileException -> return "Repository or branch not found, or the connected account cannot access it."
+                is java.lang.OutOfMemoryError -> return "The device does not have enough free storage for this repository."
             }
-            return when {
-                root is TransportException || allStackTraces.contains("org.eclipse.jgit.errors.TransportException") -> "GitHub rejected the clone. Reconnect GitHub and confirm the app can access this repository."
-                allStackTraces.contains("java.net.SocketTimeoutException") || allStackTraces.contains("java.net.ConnectException") -> "Network error during clone. Check your internet connection and try again."
-                allStackTraces.contains("javax.net.ssl.SSLHandshakeException") || allStackTraces.contains("java.security.cert.CertificateException") -> "A secure connection to GitHub could not be established. Check the device date, network, and certificate settings."
-                allStackTraces.contains("java.io.FileNotFoundException") || allStackTraces.contains("java.nio.file.NoSuchFileException") -> "Repository or branch not found, or the connected account cannot access it."
-                allStackTraces.contains("java.lang.OutOfMemoryError") || allStackTraces.contains("No space left on device") -> "The device does not have enough free storage for this repository."
-                allStackTraces.contains("java.net.UnknownHostException") -> "Could not resolve github.com. Check your DNS and internet connection."
-                allStackTraces.contains("java.net.SocketException") -> "Network socket error during clone. Check your internet connection and firewall settings."
-                else -> "Git could not clone the repository. Check the URL, network connection, and GitHub access permissions."
-            }
+            current = current.cause
         }
         
+        // Fallback: check message content for known patterns
         return when {
-            root is TransportException && message.contains("not authorized", true) -> "GitHub rejected the clone. Reconnect GitHub and confirm the app can access this repository."
-            root is TransportException && message.contains("authentication", true) -> "GitHub authentication failed. Reconnect GitHub, then try again."
             message.contains("HTTP 404", true) || message.contains("404", true) -> "Repository not found. Check the URL and ensure you have access."
             message.contains("HTTP 403", true) || message.contains("403", true) -> "Access denied. Confirm your GitHub token has permission to access this repository."
             message.contains("HTTP 401", true) || message.contains("401", true) -> "Authentication required. Reconnect GitHub and try again."

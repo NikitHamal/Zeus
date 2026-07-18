@@ -27,3 +27,29 @@
     <fields>;
     <methods>;
 }
+
+# Keep standard Java network/IO exception class names readable in stack traces
+-keep class java.net.SocketTimeoutException {
+    <init>(...);
+}
+-keep class java.net.ConnectException {
+    <init>(...);
+}
+-keep class java.net.UnknownHostException {
+    <init>(...);
+}
+-keep class java.net.SocketException {
+    <init>(...);
+}
+-keep class javax.net.ssl.SSLHandshakeException {
+    <init>(...);
+}
+-keep class java.security.cert.CertificateException {
+    <init>(...);
+}
+-keep class java.io.FileNotFoundException {
+    <init>(...);
+}
+-keep class java.nio.file.NoSuchFileException {
+    <init>(...);
+}
