@@ -189,6 +189,9 @@ class GitService {
         return when {
             root is TransportException && message.contains("not authorized", true) -> "GitHub rejected the clone. Reconnect GitHub and confirm the app can access this repository."
             root is TransportException && message.contains("authentication", true) -> "GitHub authentication failed. Reconnect GitHub, then try again."
+            message.contains("HTTP 404", true) || message.contains("404", true) -> "Repository not found. Check the URL and ensure you have access."
+            message.contains("HTTP 403", true) || message.contains("403", true) -> "Access denied. Confirm your GitHub token has permission to access this repository."
+            message.contains("HTTP 401", true) || message.contains("401", true) -> "Authentication required. Reconnect GitHub and try again."
             message.contains("not found", true) -> "Repository or branch not found, or the connected account cannot access it."
             message.contains("SSL", true) || message.contains("certificate", true) -> "A secure connection to GitHub could not be established. Check the device date, network, and certificate settings."
             message.contains("timeout", true) || message.contains("timed out", true) -> "The clone timed out. Check the network and try again."
