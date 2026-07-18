@@ -194,8 +194,18 @@ class GitService {
             (message.length < 20 && !message.any { it.isLetterOrDigit() || it == ' ' || it == '.' || it == ':' })
         )
         
+        // Even if message is obfuscated, inspect exception type and stack trace for clues
         if (isObfuscated) {
-            return "Git could not clone the repository. Check the URL, network connection, and GitHub access permissions."
+            val stackTrace = root.stackTrace.joinToString("\n") { it.toString() }
+            return when {
+                root is TransportException -> "GitHub rejected the clone. Reconnect GitHub and confirm the app can access this repository."
+                stackTrace.contains("TransportException", ignoreCase = true) -> "GitHub rejected the clone. Reconnect GitHub and confirm the app can access this repository."
+                stackTrace.contains("IOException", ignoreCase = true) -> "Network error during clone. Check your internet connection and try again."
+                stackTrace.contains("SecurityException", ignoreCase = true) || stackTrace.contains("SSL", ignoreCase = true) -> "A secure connection to GitHub could not be established. Check the device date, network, and certificate settings."
+                stackTrace.contains("FileNotFoundException", ignoreCase = true) || stackTrace.contains("NoSuchFile", ignoreCase = true) -> "Repository or branch not found, or the connected account cannot access it."
+                stackTrace.contains("OutOfMemory", ignoreCase = true) || stackTrace.contains("NoSpace", ignoreCase = true) -> "The device does not have enough free storage for this repository."
+                else -> "Git could not clone the repository. Check the URL, network connection, and GitHub access permissions."
+            }
         }
         
         return when {
