@@ -1,6 +1,7 @@
 package com.zeus.code.ui
 
 import android.app.Application
+import android.content.Context
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -20,6 +21,7 @@ import com.zeus.code.model.Issue
 import com.zeus.code.model.PullRequest
 import com.zeus.code.model.Repository
 import com.zeus.code.model.Workspace
+import com.zeus.code.ui.theme.ZeusThemeMode
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -35,6 +37,7 @@ data class ZeusState(
     val offlineMode: Boolean = false,
     val busy: Boolean = false,
     val message: String? = null,
+    val themeMode: ZeusThemeMode = ZeusThemeMode.LIGHT,
     val login: DeviceLoginState? = null,
     val user: GitHubUser? = null,
     val repositories: List<Repository> = emptyList(),
@@ -64,6 +67,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val git = GitService()
     private val workspaces = WorkspaceManager(application, git)
     private val terminal = TerminalEngine(git)
+    private val settings = application.getSharedPreferences("zeus_settings", Context.MODE_PRIVATE)
 
     private val _state = MutableStateFlow(ZeusState())
     val state: StateFlow<ZeusState> = _state.asStateFlow()
@@ -71,6 +75,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var token: String? = null
 
     init {
+        val savedTheme = runCatching {
+            ZeusThemeMode.valueOf(settings.getString("theme_mode", null).orEmpty())
+        }.getOrDefault(ZeusThemeMode.LIGHT)
+        _state.update { it.copy(themeMode = savedTheme) }
         viewModelScope.launch {
             token = tokenStore.read()
             refreshWorkspacesInternal()
@@ -130,6 +138,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun dismissMessage() = _state.update { it.copy(message = null) }
     fun setRepoQuery(value: String) = _state.update { it.copy(repoQuery = value) }
+
+    fun setThemeMode(mode: ZeusThemeMode) {
+        if (mode == _state.value.themeMode) return
+        settings.edit().putString("theme_mode", mode.name).apply()
+        _state.update { it.copy(themeMode = mode) }
+    }
 
     fun refreshAccount() = task("Refreshing GitHub…") {
         val accessToken = requireToken()
@@ -245,6 +259,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun selectWorkspace(workspace: Workspace) = task("Opening workspace…") {
         selectWorkspaceInternal(workspace)
     }
+
+    fun refreshWorkspacesList() = task(null) { refreshWorkspacesInternal() }
+
+    suspend fun workspaceBranches(): List<String> =
+        runCatching { git.branches(requireWorkspace().directory) }.getOrDefault(emptyList())
 
     fun deleteWorkspace(workspace: Workspace) = task("Deleting workspace…") {
         workspaces.delete(workspace)

@@ -172,4 +172,4 @@ data class DeviceLoginState(
     val expiresIn: Int
 )
 
-enum class MainTab { HOME, AGENT, WORKSPACES, GITHUB, TERMINAL, SETTINGS }
+enum class MainTab { HOME, AGENT, WORKSPACES, GITHUB }

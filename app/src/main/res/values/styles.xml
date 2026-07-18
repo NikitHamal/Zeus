@@ -1,9 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!--Base app theme: transparent bars; Compose ZeusTheme controls bar colors and icon contrast at runtime. -->
     <style name="Theme.Zeus" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:fontFamily">sans</item>
         <item name="android:windowLightStatusBar">true</item>
-        <item name="android:navigationBarColor">#FAF9FD</item>
-        <item name="android:statusBarColor">#FAF9FD</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:enforceNavigationBarContrast">false</item>
+        <item name="android:enforceStatusBarContrast">false</item>
     </style>
 </resources>
