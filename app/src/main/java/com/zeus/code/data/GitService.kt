@@ -21,10 +21,10 @@ class GitService {
 
     suspend fun clone(url: String, directory: File, token: String?, branch: String? = null): String =
         withContext(Dispatchers.IO) {
-            val normalizedUrl = normalizeRemote(url)
-            require(!directory.exists() || directory.list().isNullOrEmpty()) { "Destination is not empty." }
-            directory.parentFile?.mkdirs()
             try {
+                val normalizedUrl = normalizeRemote(url)
+                require(!directory.exists() || directory.list().isNullOrEmpty()) { "Destination is not empty." }
+                directory.parentFile?.mkdirs()
                 val command = Git.cloneRepository()
                     .setURI(normalizedUrl)
                     .setDirectory(directory)
