@@ -10,9 +10,13 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-class SecureTokenStore(context: Context) {
-    private val preferences = context.getSharedPreferences("zeus_secure", Context.MODE_PRIVATE)
-    private val keyAlias = "zeus_github_token"
+class SecureTokenStore(context: Context, namespace: String = "github") {
+    private val safeNamespace = namespace.replace(Regex("[^A-Za-z0-9_-]"), "_")
+    private val preferences = context.getSharedPreferences(
+        if (safeNamespace == "github") "zeus_secure" else "zeus_secure_$safeNamespace",
+        Context.MODE_PRIVATE
+    )
+    private val keyAlias = if (safeNamespace == "github") "zeus_github_token" else "zeus_${safeNamespace}_token"
 
     private fun secretKey(): SecretKey {
         val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
@@ -39,7 +43,7 @@ class SecureTokenStore(context: Context) {
         preferences.edit()
             .putString("token", Base64.encodeToString(encrypted, Base64.NO_WRAP))
             .putString("iv", Base64.encodeToString(cipher.iv, Base64.NO_WRAP))
-            .apply()
+            .commit()
     }
 
     fun read(): String? = runCatching {
@@ -55,6 +59,6 @@ class SecureTokenStore(context: Context) {
     }.getOrNull()
 
     fun clear() {
-        preferences.edit().clear().apply()
+        preferences.edit().clear().commit()
     }
 }

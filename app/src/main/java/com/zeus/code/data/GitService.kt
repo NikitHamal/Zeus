@@ -7,25 +7,38 @@ import kotlinx.coroutines.withContext
 import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.api.ListBranchCommand
 import org.eclipse.jgit.api.ResetCommand
+import org.eclipse.jgit.api.errors.GitAPIException
+import org.eclipse.jgit.errors.TransportException
 import org.eclipse.jgit.lib.Constants
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider
 import java.io.File
+import java.net.URI
 
 class GitService {
     private fun credentials(token: String?) = token?.takeIf { it.isNotBlank() }
-        ?.let { UsernamePasswordCredentialsProvider(it, "x-oauth-basic") }
+        ?.let { UsernamePasswordCredentialsProvider("x-access-token", it) }
 
     suspend fun clone(url: String, directory: File, token: String?, branch: String? = null): String =
         withContext(Dispatchers.IO) {
+            val normalizedUrl = normalizeRemote(url)
             require(!directory.exists() || directory.list().isNullOrEmpty()) { "Destination is not empty." }
             directory.parentFile?.mkdirs()
-            val command = Git.cloneRepository()
-                .setURI(url)
-                .setDirectory(directory)
-                .setCloneAllBranches(true)
-                .setCredentialsProvider(credentials(token))
-            if (!branch.isNullOrBlank()) command.setBranch(branch)
-            command.call().use { it.repository.branch }
+            try {
+                val command = Git.cloneRepository()
+                    .setURI(normalizedUrl)
+                    .setDirectory(directory)
+                    .setCloneAllBranches(false)
+                    .setTimeout(120)
+                    .setCredentialsProvider(credentials(token))
+                if (!branch.isNullOrBlank()) {
+                    command.setBranch(branch)
+                    command.setBranchesToClone(listOf("refs/heads/$branch"))
+                }
+                command.call().use { it.repository.branch }
+            } catch (error: Throwable) {
+                if (directory.exists()) directory.deleteRecursively()
+                throw IllegalStateException(friendlyCloneError(error), error)
+            }
         }
 
     suspend fun init(directory: File): String = withContext(Dispatchers.IO) {
@@ -70,17 +83,18 @@ class GitService {
             .setCredentialsProvider(credentials(token))
             .setForce(force)
             .setPushAll()
+            .setTimeout(120)
             .call()
         results.flatMap { it.remoteUpdates }.joinToString("\n") { "${it.remoteName}: ${it.status}" }
     }
 
     suspend fun pull(directory: File, token: String?): String = withGit(directory) { git ->
-        val result = git.pull().setCredentialsProvider(credentials(token)).call()
+        val result = git.pull().setCredentialsProvider(credentials(token)).setTimeout(120).call()
         result.mergeResult?.mergeStatus?.toString() ?: result.toString()
     }
 
     suspend fun fetch(directory: File, token: String?): String = withGit(directory) { git ->
-        val result = git.fetch().setCredentialsProvider(credentials(token)).setRemoveDeletedRefs(true).call()
+        val result = git.fetch().setCredentialsProvider(credentials(token)).setRemoveDeletedRefs(true).setTimeout(120).call()
         result.messages.ifBlank { "Fetch complete" }
     }
 
@@ -141,7 +155,7 @@ class GitService {
 
     suspend fun setRemote(directory: File, url: String) = withGit(directory) { git ->
         val config = git.repository.config
-        config.setString("remote", "origin", "url", url)
+        config.setString("remote", "origin", "url", normalizeRemote(url))
         config.setString("remote", "origin", "fetch", "+refs/heads/*:refs/remotes/origin/*")
         config.save()
     }
@@ -152,6 +166,46 @@ class GitService {
 
     private suspend fun <T> withGit(directory: File, block: (Git) -> T): T = withContext(Dispatchers.IO) {
         require(File(directory, ".git").exists()) { "${directory.name} is not a Git repository." }
-        Git.open(directory).use(block)
+        try {
+            Git.open(directory).use(block)
+        } catch (error: Throwable) {
+            throw IllegalStateException(friendlyGitError(error), error)
+        }
+    }
+
+    private fun normalizeRemote(value: String): String {
+        val trimmed = value.trim()
+        require(trimmed.startsWith("https://")) { "Use an HTTPS Git repository URL." }
+        val uri = runCatching { URI(trimmed) }.getOrNull() ?: error("Repository URL is invalid.")
+        require(uri.host.equals("github.com", ignoreCase = true)) { "Only github.com repositories are supported." }
+        val path = uri.path.orEmpty().trim('/')
+        require(path.count { it == '/' } == 1) { "Use a repository URL such as https://github.com/owner/repo.git" }
+        return "https://github.com/$path" + if (path.endsWith(".git")) "" else ".git"
+    }
+
+    private fun friendlyCloneError(error: Throwable): String {
+        val root = rootCause(error)
+        val message = root.message.orEmpty()
+        return when {
+            root is TransportException && message.contains("not authorized", true) -> "GitHub rejected the clone. Reconnect GitHub and confirm the app can access this repository."
+            root is TransportException && message.contains("authentication", true) -> "GitHub authentication failed. Reconnect GitHub, then try again."
+            message.contains("not found", true) -> "Repository or branch not found, or the connected account cannot access it."
+            message.contains("SSL", true) || message.contains("certificate", true) -> "A secure connection to GitHub could not be established. Check the device date, network, and certificate settings."
+            message.contains("timeout", true) || message.contains("timed out", true) -> "The clone timed out. Check the network and try again."
+            message.contains("No space", true) -> "The device does not have enough free storage for this repository."
+            root is GitAPIException -> message.ifBlank { "Git could not clone the repository." }
+            else -> message.ifBlank { "Git could not clone the repository." }
+        }
+    }
+
+    private fun friendlyGitError(error: Throwable): String {
+        val root = rootCause(error)
+        return root.message?.takeIf { it.isNotBlank() } ?: "Git operation failed."
+    }
+
+    private fun rootCause(error: Throwable): Throwable {
+        var current = error
+        while (current.cause != null && current.cause !== current) current = current.cause!!
+        return current
     }
 }

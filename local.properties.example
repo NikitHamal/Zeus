@@ -1,3 +1,4 @@
 # Copy to local.properties for local builds. Client IDs are public identifiers.
 OAUTH_CLIENT_ID=YOUR_GITHUB_OAUTH_CLIENT_ID
+BACKGROUND_AGENT_BASE_URL=https://nebians.consica.com.np
 sdk.dir=/path/to/Android/Sdk

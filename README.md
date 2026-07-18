@@ -1,11 +1,23 @@
 # Zeus
 
-Zeus is a phone-first GitHub workbench built with Kotlin, Jetpack Compose and Material 3. It combines GitHub repository management, a local code workspace, a lightweight file editor, JGit-powered version control and an embedded terminal-like command surface.
+Zeus is a phone-first GitHub and NEBians Background Agent workbench built with Kotlin, Jetpack Compose and Material 3. It combines durable AI coding tasks, GitHub repository management, a local code workspace, a lightweight file editor, JGit-powered version control and an embedded terminal-like command surface.
 
 Package: `com.zeus.code`  
 OAuth callback registered in Android: `zeus://oauth`
 
 ## Included features
+
+
+### NEBians Background Agent
+
+- One-time device authorization through the NEBians Background Agent
+- Encrypted persistent device token backed by Android Keystore
+- Qwen 3.7 Plus task creation with file and image attachments
+- Live task status, progress, messages, changed files and patch review
+- Pause, resume, stop, archive, restore and permanent delete
+- Generate and download changed-files ZIP and patch artifacts
+- Push agent branches and open pull requests
+- Clone the agent branch directly into a Zeus workspace for local pull, edit, commit and push
 
 ### GitHub
 
@@ -93,8 +105,8 @@ The included public signing configuration is:
 Use Android Studio or a machine with Android SDK 35, JDK 17 and Gradle 8.9:
 
 ```bash
-gradle :app:assembleDebug -POAUTH_CLIENT_ID=YOUR_CLIENT_ID
-gradle :app:assembleRelease -POAUTH_CLIENT_ID=YOUR_CLIENT_ID
+gradle :app:assembleDebug -POAUTH_CLIENT_ID=YOUR_CLIENT_ID -PBACKGROUND_AGENT_BASE_URL=https://nebians.consica.com.np
+gradle :app:assembleRelease -POAUTH_CLIENT_ID=YOUR_CLIENT_ID -PBACKGROUND_AGENT_BASE_URL=https://nebians.consica.com.np
 ```
 
 ## Important behavior
@@ -106,6 +118,8 @@ gradle :app:assembleRelease -POAUTH_CLIENT_ID=YOUR_CLIENT_ID
 
 ## Architecture
 
+- `BackgroundAgentApi`: authenticated NEBians mobile API through OkHttp + kotlinx.serialization
+- `BackgroundAgentViewModel`: persistent device authorization, task lifecycle and live refresh
 - `GitHubApi`: OAuth and GitHub REST calls through OkHttp + kotlinx.serialization
 - `SecureTokenStore`: AES-GCM token encryption backed by Android Keystore
 - `GitService`: JGit operations

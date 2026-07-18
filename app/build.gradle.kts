@@ -17,6 +17,11 @@ val oauthClientId = providers.gradleProperty("OAUTH_CLIENT_ID")
     .orElse(localProperties.getProperty("OAUTH_CLIENT_ID", ""))
     .get()
 
+val backgroundAgentBaseUrl = providers.gradleProperty("BACKGROUND_AGENT_BASE_URL")
+    .orElse(providers.environmentVariable("BACKGROUND_AGENT_BASE_URL"))
+    .orElse(localProperties.getProperty("BACKGROUND_AGENT_BASE_URL", "https://nebians.consica.com.np"))
+    .get()
+
 android {
     namespace = "com.zeus.code"
     compileSdk = 35
@@ -30,6 +35,7 @@ android {
 
         buildConfigField("String", "OAUTH_CLIENT_ID", "\"${oauthClientId.replace("\"", "\\\"")}\"")
         buildConfigField("String", "OAUTH_CALLBACK", "\"zeus://oauth\"")
+        buildConfigField("String", "BACKGROUND_AGENT_BASE_URL", "\"${backgroundAgentBaseUrl.trimEnd('/').replace("\"", "\\\"")}\"")
     }
 
     signingConfigs {
@@ -102,7 +108,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("org.eclipse.jgit:org.eclipse.jgit:7.7.0.202606012155-r")
+    implementation("org.eclipse.jgit:org.eclipse.jgit:6.10.0.202406032230-r")
     runtimeOnly("org.slf4j:slf4j-nop:2.0.18")
 
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")

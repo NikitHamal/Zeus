@@ -10,6 +10,7 @@
         android:label="Zeus"
         android:roundIcon="@drawable/ic_zeus"
         android:supportsRtl="true"
+        android:usesCleartextTraffic="false"
         android:theme="@style/Theme.Zeus">
         <activity
             android:name=".MainActivity"

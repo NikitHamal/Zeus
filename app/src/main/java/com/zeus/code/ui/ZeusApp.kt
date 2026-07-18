@@ -6,8 +6,6 @@ import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -37,6 +35,7 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.ArrowDownward
 import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.Bolt
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.AccountTree
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Clear
@@ -130,17 +129,19 @@ import com.zeus.code.model.MainTab
 import com.zeus.code.model.PullRequest
 import com.zeus.code.model.Repository
 import com.zeus.code.model.Workspace
+import com.zeus.code.ui.agent.BackgroundAgentScreen
+import com.zeus.code.ui.agent.BackgroundAgentViewModel
 import kotlinx.coroutines.launch
 import java.text.DateFormat
 import java.util.Date
 
 @Composable
-fun ZeusApp(viewModel: MainViewModel) {
+fun ZeusApp(viewModel: MainViewModel, agentViewModel: BackgroundAgentViewModel) {
     val state by viewModel.state.collectAsState()
     when {
         state.booting -> SplashScreen()
         !state.authenticated && !state.offlineMode -> LoginScreen(state, viewModel)
-        else -> MainShell(state, viewModel)
+        else -> MainShell(state, viewModel, agentViewModel)
     }
 }
 
@@ -233,7 +234,9 @@ private fun LoginScreen(state: ZeusState, viewModel: MainViewModel) {
                 Text(
                     "OAuth uses GitHub Device Flow. Your token is encrypted with Android Keystore and the client secret is never shipped in the app.",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
         }
@@ -242,13 +245,20 @@ private fun LoginScreen(state: ZeusState, viewModel: MainViewModel) {
 }
 
 @Composable
-private fun MainShell(state: ZeusState, viewModel: MainViewModel) {
+private fun MainShell(state: ZeusState, viewModel: MainViewModel, agentViewModel: BackgroundAgentViewModel) {
+    val agentState by agentViewModel.state.collectAsState()
     var selectedTab by rememberSaveable { mutableStateOf(MainTab.HOME) }
     val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(state.message) {
         state.message?.let {
             snackbar.showSnackbar(it)
             viewModel.dismissMessage()
+        }
+    }
+    LaunchedEffect(agentState.message) {
+        agentState.message?.let {
+            snackbar.showSnackbar(it)
+            agentViewModel.dismissMessage()
         }
     }
 
@@ -260,7 +270,7 @@ private fun MainShell(state: ZeusState, viewModel: MainViewModel) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text(tabTitle(selectedTab), style = MaterialTheme.typography.titleLarge)
                             state.selectedWorkspace?.let {
-                                Text(it.name, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(it.name, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                         }
                     },
@@ -268,6 +278,7 @@ private fun MainShell(state: ZeusState, viewModel: MainViewModel) {
                     actions = {
                         IconButton(onClick = {
                             when (selectedTab) {
+                                MainTab.AGENT -> agentViewModel.refresh()
                                 MainTab.GITHUB -> viewModel.refreshAccount()
                                 MainTab.WORKSPACES, MainTab.TERMINAL -> viewModel.refreshWorkspace()
                                 else -> Unit
@@ -276,13 +287,14 @@ private fun MainShell(state: ZeusState, viewModel: MainViewModel) {
                     },
                     colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = MaterialTheme.colorScheme.background)
                 )
-                AnimatedVisibility(state.busy) { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+                if (state.busy || agentState.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
             }
         },
         bottomBar = {
             NavigationBar {
                 MainTab.entries.forEach { tab ->
                     val count = when (tab) {
+                        MainTab.AGENT -> agentState.sessions.size
                         MainTab.GITHUB -> state.repositories.size
                         MainTab.WORKSPACES -> state.workspaces.size
                         else -> 0
@@ -292,25 +304,28 @@ private fun MainShell(state: ZeusState, viewModel: MainViewModel) {
                         onClick = { selectedTab = tab },
                         icon = {
                             BadgedBox(badge = {
-                                if (count > 0 && tab in listOf(MainTab.GITHUB, MainTab.WORKSPACES)) Badge { Text(count.coerceAtMost(99).toString()) }
+                                if (count > 0 && tab in listOf(MainTab.AGENT, MainTab.GITHUB, MainTab.WORKSPACES)) Badge { Text(count.coerceAtMost(99).toString()) }
                             }) { Icon(tabIcon(tab), tabTitle(tab)) }
                         },
-                        label = { Text(tabTitle(tab)) }
+                        label = { Text(tabTitle(tab), maxLines = 1) },
+                        alwaysShowLabel = false
                     )
                 }
             }
         },
         snackbarHost = { SnackbarHost(snackbar) }
     ) { padding ->
-        AnimatedContent(selectedTab, label = "main-tab") { tab ->
-            Box(Modifier.fillMaxSize().padding(padding)) {
-                when (tab) {
-                    MainTab.HOME -> HomeScreen(state) { selectedTab = it }
-                    MainTab.WORKSPACES -> WorkspacesScreen(state, viewModel)
-                    MainTab.GITHUB -> GitHubScreen(state, viewModel)
-                    MainTab.TERMINAL -> TerminalScreen(state, viewModel)
-                    MainTab.SETTINGS -> SettingsScreen(state, viewModel)
+        Box(Modifier.fillMaxSize().padding(padding)) {
+            when (selectedTab) {
+                MainTab.HOME -> HomeScreen(state) { selectedTab = it }
+                MainTab.AGENT -> BackgroundAgentScreen(agentViewModel) { url, name, branch ->
+                    viewModel.cloneUrl(url, name, branch)
+                    selectedTab = MainTab.WORKSPACES
                 }
+                MainTab.WORKSPACES -> WorkspacesScreen(state, viewModel)
+                MainTab.GITHUB -> GitHubScreen(state, viewModel)
+                MainTab.TERMINAL -> TerminalScreen(state, viewModel)
+                MainTab.SETTINGS -> SettingsScreen(state, viewModel)
             }
         }
     }
@@ -346,22 +361,15 @@ private fun HomeScreen(state: ZeusState, navigate: (MainTab) -> Unit) {
             Text("Quick actions", style = MaterialTheme.typography.titleLarge)
         }
         item {
-            QuickAction(Icons.Rounded.CloudDownload, "Clone a repository", "Bring a GitHub project onto your phone") { navigate(MainTab.GITHUB) }
-            QuickAction(Icons.Rounded.Edit, "Edit local files", "Open an imported workspace and save changes") { navigate(MainTab.WORKSPACES) }
-            QuickAction(Icons.Rounded.Terminal, "Run commands", "Use Git shortcuts and Android shell commands") { navigate(MainTab.TERMINAL) }
+            QuickAction(Icons.Rounded.AutoAwesome, "Run a background task", "Send production work to the NEBians coding agent") { navigate(MainTab.AGENT) }
+            QuickAction(Icons.Rounded.FolderOpen, "Open local workspaces", "Edit, commit, pull and push from your phone") { navigate(MainTab.WORKSPACES) }
+            QuickAction(Icons.Rounded.Source, "Browse GitHub", "Clone repositories and manage pull requests") { navigate(MainTab.GITHUB) }
         }
         state.selectedWorkspace?.let { workspace ->
             item {
                 Text("Active workspace", style = MaterialTheme.typography.titleLarge)
                 WorkspaceCard(workspace, selected = true, onOpen = { navigate(MainTab.WORKSPACES) }, onDelete = null)
             }
-        }
-        item {
-            InfoCard(
-                icon = Icons.Rounded.Info,
-                title = "Android terminal limits",
-                body = "Regular commands run inside Zeus using /system/bin/sh. Git commands are implemented with JGit, so commit, push, pull, merge, reset and branches work even when the device has no git binary."
-            )
         }
     }
 }
@@ -605,6 +613,7 @@ private fun TerminalScreen(state: ZeusState, viewModel: MainViewModel) {
 @Composable
 private fun SettingsScreen(state: ZeusState, viewModel: MainViewModel) {
     val context = LocalContext.current
+    var disconnectConfirm by remember { mutableStateOf(false) }
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item {
             ElevatedCard(Modifier.fillMaxWidth()) {
@@ -616,16 +625,14 @@ private fun SettingsScreen(state: ZeusState, viewModel: MainViewModel) {
                     }
                     Spacer(Modifier.width(14.dp))
                     Column(Modifier.weight(1f)) {
-                        Text(state.user?.name ?: state.user?.login ?: "Offline user", style = MaterialTheme.typography.titleLarge)
-                        Text(state.user?.bio ?: if (state.authenticated) "Connected to GitHub" else "Local mode", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(state.user?.name ?: state.user?.login ?: "Offline user", style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(state.user?.bio ?: if (state.authenticated) "Connected to GitHub" else "Local mode", color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     }
                 }
             }
         }
         item { SettingRow(Icons.Rounded.Bolt, "Zeus version", "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})") }
-        item { SettingRow(Icons.Rounded.Gavel, "OAuth callback", BuildConfig.OAUTH_CALLBACK) }
-        item { SettingRow(Icons.Rounded.Save, "Token security", "AES-GCM key stored in Android Keystore") }
-        item { SettingRow(Icons.Rounded.Folder, "Workspace storage", "Private app storage; export copies omit .git") }
+        item { SettingRow(Icons.Rounded.Folder, "Workspace storage", "Private app storage; exported copies omit .git") }
         item {
             OutlinedButton(
                 onClick = {
@@ -633,22 +640,30 @@ private fun SettingsScreen(state: ZeusState, viewModel: MainViewModel) {
                     context.startActivity(intent)
                 },
                 modifier = Modifier.fillMaxWidth()
-            ) { Icon(Icons.Rounded.OpenInBrowser, null); Spacer(Modifier.width(8.dp)); Text("Manage GitHub authorizations") }
-        }
-        item {
-            Button(onClick = viewModel::logout, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.AutoMirrored.Rounded.Logout, null)
+            ) {
+                Icon(Icons.Rounded.OpenInBrowser, null)
                 Spacer(Modifier.width(8.dp))
-                Text(if (state.authenticated) "Sign out" else "Exit offline mode")
+                Text("Manage GitHub authorization", maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
         item {
-            InfoCard(
-                Icons.Rounded.Info,
-                "Public signing key warning",
-                "This project includes a disposable public release keystore only because you requested zero-setup phone builds. Anyone can sign an APK with the same identity; replace it before distributing Zeus to other people."
-            )
+            OutlinedButton(
+                onClick = { if (state.authenticated) disconnectConfirm = true else viewModel.logout() },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.AutoMirrored.Rounded.Logout, null)
+                Spacer(Modifier.width(8.dp))
+                Text(if (state.authenticated) "Disconnect GitHub" else "Exit offline mode", maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
         }
+    }
+    if (disconnectConfirm) ConfirmDialog(
+        title = "Disconnect GitHub?",
+        body = "Zeus will remove the encrypted GitHub token from this device. Local workspaces stay available.",
+        onDismiss = { disconnectConfirm = false }
+    ) {
+        disconnectConfirm = false
+        viewModel.logout()
     }
 }
 
@@ -768,8 +783,8 @@ private fun QuickAction(icon: androidx.compose.ui.graphics.vector.ImageVector, t
             }
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.titleMedium)
-                Text(body, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(body, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
             Icon(Icons.Rounded.KeyboardArrowRight, null)
         }
@@ -788,11 +803,13 @@ private fun WorkspaceCard(workspace: Workspace, selected: Boolean, onOpen: () ->
             }
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
-                Text(workspace.name, style = MaterialTheme.typography.titleMedium)
+                Text(workspace.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
                     workspace.currentBranch?.let { "Branch: $it" } ?: "Local folder",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
                 workspace.remoteUrl?.let { Text(it, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis) }
             }
@@ -812,14 +829,17 @@ private fun RepositoryCard(repo: Repository, onOpen: () -> Unit, onClone: () -> 
             Spacer(Modifier.width(13.dp))
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(repo.fullName, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(repo.fullName, modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     if (repo.private) { Spacer(Modifier.width(6.dp)); Text("Private", style = MaterialTheme.typography.labelMedium) }
                 }
                 Text(repo.description ?: "No description", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    repo.language?.let { Text(it, style = MaterialTheme.typography.labelMedium) }
-                    Text("★ ${repo.stars}", style = MaterialTheme.typography.labelMedium)
-                    Text("Issues ${repo.openIssues}", style = MaterialTheme.typography.labelMedium)
+                Row(
+                    Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    repo.language?.let { Text(it, style = MaterialTheme.typography.labelMedium, maxLines = 1) }
+                    Text("★ ${repo.stars}", style = MaterialTheme.typography.labelMedium, maxLines = 1)
+                    Text("Issues ${repo.openIssues}", style = MaterialTheme.typography.labelMedium, maxLines = 1)
                 }
             }
             Box {
@@ -851,8 +871,8 @@ private fun FileRow(entry: FileEntry, onOpen: () -> Unit, onDelete: () -> Unit) 
 private fun PullRow(pull: PullRequest, onMerge: () -> Unit, onReview: () -> Unit) {
     OutlinedCard(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(13.dp)) {
-            Text("#${pull.number} ${pull.title}", fontWeight = FontWeight.SemiBold)
-            Text("${pull.head.ref} → ${pull.base.ref} · ${pull.user.login}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("#${pull.number} ${pull.title}", fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text("${pull.head.ref} → ${pull.base.ref} · ${pull.user.login}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(10.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilledTonalButton(onClick = onReview) { Text("Review") }
@@ -874,8 +894,8 @@ private fun EmptyState(icon: androidx.compose.ui.graphics.vector.ImageVector, ti
     Column(Modifier.fillMaxWidth().padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Surface(Modifier.size(64.dp), shape = CircleShape, color = MaterialTheme.colorScheme.surfaceVariant) { Box(contentAlignment = Alignment.Center) { Icon(icon, null, Modifier.size(30.dp)) } }
         Spacer(Modifier.height(14.dp))
-        Text(title, style = MaterialTheme.typography.titleLarge)
-        Text(body, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(title, style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(body, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 3, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -899,9 +919,9 @@ private fun SettingRow(icon: androidx.compose.ui.graphics.vector.ImageVector, ti
         Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(icon, null)
             Spacer(Modifier.width(14.dp))
-            Column {
-                Text(title, style = MaterialTheme.typography.titleMedium)
-                Text(value, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(value, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
         }
     }
@@ -1080,6 +1100,7 @@ private fun ConfirmDialog(title: String, body: String, onDismiss: () -> Unit, on
 
 private fun tabTitle(tab: MainTab) = when (tab) {
     MainTab.HOME -> "Home"
+    MainTab.AGENT -> "Agent"
     MainTab.WORKSPACES -> "Workspaces"
     MainTab.GITHUB -> "GitHub"
     MainTab.TERMINAL -> "Terminal"
@@ -1088,6 +1109,7 @@ private fun tabTitle(tab: MainTab) = when (tab) {
 
 private fun tabIcon(tab: MainTab) = when (tab) {
     MainTab.HOME -> Icons.Rounded.Home
+    MainTab.AGENT -> Icons.Rounded.AutoAwesome
     MainTab.WORKSPACES -> Icons.Rounded.Folder
     MainTab.GITHUB -> Icons.Rounded.Source
     MainTab.TERMINAL -> Icons.Rounded.Terminal

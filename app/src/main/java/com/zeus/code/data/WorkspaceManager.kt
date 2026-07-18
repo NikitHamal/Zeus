@@ -32,6 +32,11 @@ class WorkspaceManager(private val context: Context, private val gitService: Git
         return File(root, safe)
     }
 
+    suspend fun workspaceAt(directory: File): Workspace = withContext(Dispatchers.IO) {
+        require(directory.canonicalPath.startsWith(root.canonicalPath + File.separator)) { "Invalid workspace path." }
+        workspace(directory)
+    }
+
     suspend fun importTree(uri: Uri, preferredName: String? = null): Workspace = withContext(Dispatchers.IO) {
         val source = DocumentFile.fromTreeUri(context, uri) ?: error("Unable to open selected folder.")
         val name = preferredName?.takeIf { it.isNotBlank() } ?: source.name ?: "workspace-${System.currentTimeMillis()}"

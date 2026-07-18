@@ -6,6 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.zeus.code.BuildConfig
 import com.zeus.code.data.GitHubApi
+import com.zeus.code.data.GitHubApiException
 import com.zeus.code.data.GitService
 import com.zeus.code.data.SecureTokenStore
 import com.zeus.code.data.TerminalEngine
@@ -74,12 +75,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             token = tokenStore.read()
             refreshWorkspacesInternal()
             if (token != null) {
-                runCatching { loadAccount(token!!) }
-                    .onFailure {
+                try {
+                    loadAccount(token!!)
+                } catch (error: GitHubApiException) {
+                    if (error.statusCode == 401) {
                         tokenStore.clear()
                         token = null
-                        _state.update { s -> s.copy(message = "Session expired: ${it.message}") }
+                        _state.update { it.copy(message = "GitHub authorization expired. Sign in once to reconnect.") }
+                    } else {
+                        _state.update { it.copy(authenticated = true, offlineMode = true, message = "GitHub is temporarily unavailable. Your authorization is still saved.") }
                     }
+                } catch (error: Throwable) {
+                    _state.update { it.copy(authenticated = true, offlineMode = true, message = "Zeus opened offline. Your GitHub authorization is still saved.") }
+                }
             }
             _state.update { it.copy(booting = false, authenticated = token != null) }
         }
@@ -217,15 +225,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun cloneRepository(repository: Repository) = cloneUrl(repository.cloneUrl, repository.name)
 
-    fun cloneUrl(url: String, preferredName: String = url.substringAfterLast('/').removeSuffix(".git")) =
-        task("Cloning repository…") {
-            val destination = workspaces.destination(preferredName)
-            val actual = if (destination.exists()) workspaces.destination("$preferredName-${System.currentTimeMillis().toString().takeLast(4)}") else destination
-            git.clone(url, actual, token)
-            refreshWorkspacesInternal()
-            selectWorkspaceInternal(_state.value.workspaces.first { it.path == actual.absolutePath })
-            toast("Repository cloned.")
+    fun cloneUrl(
+        url: String,
+        preferredName: String = url.substringAfterLast('/').removeSuffix(".git"),
+        branch: String? = null
+    ) = task("Cloning repository…") {
+        val destination = workspaces.destination(preferredName)
+        val actual = if (destination.exists()) {
+            workspaces.destination("$preferredName-${System.currentTimeMillis().toString().takeLast(4)}")
+        } else {
+            destination
         }
+        git.clone(url, actual, token, branch)
+        refreshWorkspacesInternal()
+        selectWorkspaceInternal(workspaces.workspaceAt(actual))
+        toast(branch?.let { "Repository cloned on $it." } ?: "Repository cloned.")
+    }
 
     fun selectWorkspace(workspace: Workspace) = task("Opening workspace…") {
         selectWorkspaceInternal(workspace)
@@ -405,6 +420,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 block()
             } catch (cancelled: CancellationException) {
                 throw cancelled
+            } catch (error: GitHubApiException) {
+                if (error.statusCode == 401) {
+                    tokenStore.clear()
+                    token = null
+                    _state.update {
+                        it.copy(
+                            authenticated = false,
+                            offlineMode = false,
+                            user = null,
+                            repositories = emptyList(),
+                            selectedRepo = null,
+                            message = "GitHub authorization expired. Sign in once to reconnect."
+                        )
+                    }
+                } else {
+                    _state.update { it.copy(message = error.message) }
+                }
             } catch (error: Throwable) {
                 _state.update { it.copy(message = error.message ?: error.javaClass.simpleName) }
             } finally {

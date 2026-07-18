@@ -20,8 +20,9 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import java.io.IOException
 import java.util.concurrent.TimeUnit
+
+class GitHubApiException(val statusCode: Int, override val message: String) : RuntimeException(message)
 
 class GitHubApi(
     private val client: OkHttpClient = OkHttpClient.Builder()
@@ -216,7 +217,7 @@ class GitHubApi(
             if (!response.isSuccessful) {
                 val message = runCatching { json.decodeFromString<GitHubError>(body).message }
                     .getOrDefault("GitHub request failed (${response.code})")
-                throw IOException(message)
+                throw GitHubApiException(response.code, message)
             }
             return transform(body)
         }
