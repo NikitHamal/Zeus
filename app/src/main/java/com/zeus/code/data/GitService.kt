@@ -248,6 +248,9 @@ class GitService {
         }
         
         // Fallback: check message content for known patterns
+        // If message is blank but we recognized a type via instanceof above, we would have returned already.
+        // If we reach here with a blank message, provide type-aware diagnostics instead of a dead-end fallback.
+        val rootSimpleName = root.javaClass.simpleName.orEmpty()
         return when {
             message.contains("HTTP 404", true) || message.contains("404", true) -> "Repository not found. Check the URL and ensure you have access."
             message.contains("HTTP 403", true) || message.contains("403", true) -> "Access denied. Confirm your GitHub token has permission to access this repository."
@@ -257,7 +260,13 @@ class GitService {
             message.contains("timeout", true) || message.contains("timed out", true) -> "The clone timed out. Check the network and try again."
             message.contains("No space", true) -> "The device does not have enough free storage for this repository."
             message.isNotBlank() -> message
-            else -> "Git could not clone the repository. Check the URL, network connection, and GitHub access permissions."
+            rootSimpleName.contains("Transport", ignoreCase = true) -> "GitHub rejected the clone. Reconnect GitHub and confirm the app can access this repository."
+            rootSimpleName.contains("IO", ignoreCase = true) || rootSimpleName.contains("Network", ignoreCase = true) || rootSimpleName.contains("Socket", ignoreCase = true) -> "Network error during clone. Check your internet connection and try again."
+            rootSimpleName.contains("SSL", ignoreCase = true) || rootSimpleName.contains("Certificate", ignoreCase = true) -> "A secure connection to GitHub could not be established. Check the device date, network, and certificate settings."
+            rootSimpleName.contains("File", ignoreCase = true) || rootSimpleName.contains("NotFound", ignoreCase = true) -> "Repository or branch not found, or the connected account cannot access it."
+            rootSimpleName.contains("Memory", ignoreCase = true) || rootSimpleName.contains("Space", ignoreCase = true) -> "The device does not have enough free storage for this repository."
+            rootSimpleName.contains("Auth", ignoreCase = true) || rootSimpleName.contains("Permission", ignoreCase = true) || rootSimpleName.contains("Security", ignoreCase = true) -> "GitHub authentication failed. Reconnect GitHub, then try again."
+            else -> "Git could not clone the repository. Check the URL, network connection, and GitHub access permissions. (Error type: $rootSimpleName)"
         }
     }
 
