@@ -16,20 +16,14 @@
 
 # Prevent R8 from obfuscating JGit exception class names in stack traces
 -keep class org.eclipse.jgit.errors.** {
-    <init>(...);
-}
--keep class org.eclipse.jgit.api.errors.** {
-    <init>(...);
-}
--keep class org.eclipse.jgit.transport.** {
-    <init>(...);
-}
-
-# Keep JGit exception class names readable in stack traces for error diagnosis
--keep class org.eclipse.jgit.errors.** {
     <fields>;
     <methods>;
 }
--keepclassmembers class org.eclipse.jgit.errors.** {
-    *;
+-keep class org.eclipse.jgit.api.errors.** {
+    <fields>;
+    <methods>;
+}
+-keep class org.eclipse.jgit.transport.** {
+    <fields>;
+    <methods>;
 }
