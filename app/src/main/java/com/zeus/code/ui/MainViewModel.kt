@@ -438,7 +438,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     _state.update { it.copy(message = error.message) }
                 }
             } catch (error: Throwable) {
-                _state.update { it.copy(message = error.message ?: error.javaClass.simpleName) }
+                val msg = error.message.orEmpty()
+                // Detect obfuscated messages from R8/ProGuard (e.g., "H2.a<init>[]")
+                val isObfuscated = msg.isNotEmpty() && (
+                    msg.contains("<init>") ||
+                    msg.matches(Regex("^[A-Z][a-z]?[0-9]*\\.[A-Za-z]")) ||
+                    (msg.length < 20 && !msg.any { it.isLetterOrDigit() || it == ' ' || it == '.' || it == ':' })
+                )
+                val displayMessage = if (isObfuscated) {
+                    "An unexpected error occurred. Please try again."
+                } else {
+                    msg.ifBlank { error.javaClass.simpleName }
+                }
+                _state.update { it.copy(message = displayMessage) }
             } finally {
                 _state.update { it.copy(busy = false) }
             }
