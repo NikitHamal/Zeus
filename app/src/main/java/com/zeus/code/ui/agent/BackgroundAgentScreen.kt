@@ -29,6 +29,7 @@ import androidx.compose.material.icons.rounded.Archive
 import androidx.compose.material.icons.rounded.AttachFile
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.LinkOff
 import androidx.compose.material.icons.rounded.MoreVert
@@ -37,6 +38,7 @@ import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Restore
 import androidx.compose.material.icons.rounded.Send
 import androidx.compose.material.icons.rounded.Source
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -69,6 +71,8 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.zeus.code.model.AgentLlmCatalog
+import com.zeus.code.model.AgentLlmProviderEntry
 import com.zeus.code.model.AgentSession
 import com.zeus.code.model.AgentUpload
 import com.zeus.code.model.Workspace
@@ -169,12 +173,23 @@ private fun AgentConnectScreen(state: AgentUiState, viewModel: BackgroundAgentVi
     }
 }
 
+private fun defaultLlmLabel(catalog: AgentLlmCatalog?): String {
+    val entry = catalog?.community?.firstOrNull { it.selectableForAgent && it.available }
+        ?: return "Choose model"
+    val model = entry.models.firstOrNull { it.id.equals(entry.defaultModel, true) }?.displayLabel
+        ?: entry.defaultModel.ifBlank { entry.label }
+    return "Default · $model"
+}
+
 @Composable
 private fun AgentDashboard(state: AgentUiState, viewModel: BackgroundAgentViewModel) {
     var projectPicker by remember { mutableStateOf(false) }
     var addProject by remember { mutableStateOf(false) }
     var accountMenu by remember { mutableStateOf(false) }
     var confirmDisconnect by remember { mutableStateOf(false) }
+    var modelPicker by remember { mutableStateOf(false) }
+    var providersDialog by remember { mutableStateOf(false) }
+    var focusedPreset by remember { mutableStateOf<AgentLlmProviderEntry?>(null) }
     var goal by remember { mutableStateOf("") }
     var uploads by remember { mutableStateOf<List<AgentUpload>>(emptyList()) }
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
@@ -191,7 +206,7 @@ private fun AgentDashboard(state: AgentUiState, viewModel: BackgroundAgentViewMo
                 Column(Modifier.weight(1f)) {
                     Text("Background Agent", style = MaterialTheme.typography.headlineSmall)
                     Text(
-                        if (state.worker.healthy) "Worker online · Qwen 3.7 Plus" else "Worker unavailable",
+                        if (state.worker.healthy) "Worker online" else "Worker unavailable",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -202,6 +217,11 @@ private fun AgentDashboard(state: AgentUiState, viewModel: BackgroundAgentViewMo
                 Box {
                     IconButton(onClick = { accountMenu = true }) { Icon(Icons.Rounded.MoreVert, "Agent account options") }
                     DropdownMenu(expanded = accountMenu, onDismissRequest = { accountMenu = false }) {
+                        DropdownMenuItem(
+                            text = { Text("AI providers") },
+                            onClick = { accountMenu = false; focusedPreset = null; providersDialog = true },
+                            leadingIcon = { Icon(Icons.Rounded.Tune, null) }
+                        )
                         DropdownMenuItem(
                             text = { Text("Disconnect NEBians") },
                             onClick = { accountMenu = false; confirmDisconnect = true },
@@ -223,6 +243,17 @@ private fun AgentDashboard(state: AgentUiState, viewModel: BackgroundAgentViewMo
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
+                    }
+                    OutlinedButton(onClick = { modelPicker = true }, modifier = Modifier.fillMaxWidth()) {
+                        Icon(Icons.Rounded.AutoAwesome, null, Modifier.size(17.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            state.llmSelection.label.ifBlank { defaultLlmLabel(state.llmCatalog) },
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Icon(Icons.Rounded.KeyboardArrowDown, null, Modifier.size(17.dp))
                     }
                     OutlinedTextField(
                         value = goal,
@@ -297,6 +328,23 @@ private fun AgentDashboard(state: AgentUiState, viewModel: BackgroundAgentViewMo
         onAddProject = { projectPicker = false; addProject = true; viewModel.loadRepositories() }
     )
     if (addProject) AgentAddProjectDialog(state, viewModel) { addProject = false }
+    if (modelPicker) AgentModelPickerDialog(
+        state = state,
+        onDismiss = { modelPicker = false },
+        onSelectDefault = { viewModel.selectLlm(null); modelPicker = false },
+        onSelect = { entry, modelId -> viewModel.selectLlm(entry, modelId); modelPicker = false },
+        onManageProviders = { entry ->
+            focusedPreset = entry
+            modelPicker = false
+            providersDialog = true
+        }
+    )
+    if (providersDialog) AgentProvidersDialog(
+        state = state,
+        viewModel = viewModel,
+        focusPreset = focusedPreset,
+        onDismiss = { providersDialog = false; focusedPreset = null }
+    )
     if (confirmDisconnect) AgentConfirmDialog(
         title = "Disconnect NEBians?",
         body = "This revokes the saved background-agent device token. Your tasks remain on NEBians.",

@@ -3,6 +3,8 @@ package com.zeus.code.data
 import com.zeus.code.BuildConfig
 import com.zeus.code.model.AgentBranchesResponse
 import com.zeus.code.model.AgentEventsResponse
+import com.zeus.code.model.AgentLlmProvidersResponse
+import com.zeus.code.model.AgentLlmTestResponse
 import com.zeus.code.model.AgentMeResponse
 import com.zeus.code.model.AgentPairStartResponse
 import com.zeus.code.model.AgentProjectResponse
@@ -94,12 +96,74 @@ class BackgroundAgentApi {
         projectId: String,
         goal: String,
         sourceBranch: String,
-        files: List<AgentUpload>
+        files: List<AgentUpload>,
+        llmProvider: String = "",
+        llmModel: String = "",
+        llmProviderId: String = ""
     ): AgentSessionResponse = multipart(
         path = "/sessions/",
         token = token,
-        fields = mapOf("projectId" to projectId, "goal" to goal, "sourceBranch" to sourceBranch),
+        fields = buildMap {
+            put("projectId", projectId)
+            put("goal", goal)
+            put("sourceBranch", sourceBranch)
+            if (llmProvider.isNotBlank()) {
+                put("llmProvider", llmProvider)
+                put("llmModel", llmModel)
+                if (llmProviderId.isNotBlank()) put("llmProviderId", llmProviderId)
+            }
+        },
         files = files
+    )
+
+    // ------------------------------------------------------------------
+    // LLM providers (BYOK / custom / official)
+    // ------------------------------------------------------------------
+
+    suspend fun llmProviders(token: String): AgentLlmProvidersResponse = get("/llm/providers/", token)
+
+    /** Create a custom provider or save a preset BYOK key. `fields` matches
+     *  the mobile API body (provider, name, apiFormat, baseUrl, apiKey,
+     *  models, defaultModel, contextWindow, maxOutputTokens). */
+    suspend fun saveLlmProvider(token: String, fields: Map<String, String>, models: List<String>): AgentLlmProvidersResponse {
+        val body = buildJsonObject {
+            fields.forEach { (key, value) -> put(key, value) }
+            put("models", kotlinx.serialization.json.JsonArray(models.map { kotlinx.serialization.json.JsonPrimitive(it) }))
+        }.toString()
+        return postJson(path = "/llm/providers/", body = body, token = token)
+    }
+
+    suspend fun updateLlmProvider(token: String, providerId: String, fields: Map<String, String>, models: List<String>?): AgentLlmProvidersResponse {
+        val body = buildJsonObject {
+            fields.forEach { (key, value) ->
+                when (key) {
+                    "enabled" -> put(key, value.equals("true", ignoreCase = true))
+                    else -> put(key, value)
+                }
+            }
+            if (models != null) {
+                put("models", kotlinx.serialization.json.JsonArray(models.map { kotlinx.serialization.json.JsonPrimitive(it) }))
+            }
+        }.toString()
+        return request(
+            Request.Builder()
+                .url(url("/llm/providers/$providerId/"))
+                .patch(body.toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull()))
+                .authorized(token)
+                .build()
+        )
+    }
+
+    suspend fun deleteLlmProvider(token: String, providerId: String): AgentSimpleResponse = request(
+        Request.Builder().url(url("/llm/providers/$providerId/")).delete().authorized(token).build()
+    )
+
+    /** One-call connectivity test. Pass either `providerId` (saved row) or
+     *  transient fields (provider/apiFormat/baseUrl/apiKey/model). */
+    suspend fun testLlmProvider(token: String, fields: Map<String, String>): AgentLlmTestResponse = postJson(
+        path = "/llm/test/",
+        body = buildJsonObject { fields.forEach { (key, value) -> put(key, value) } }.toString(),
+        token = token
     )
 
     suspend fun session(token: String, id: String): AgentSessionResponse = get("/sessions/$id/", token)

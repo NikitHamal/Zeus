@@ -180,6 +180,7 @@ data class AgentSession(
     val updatedAt: Long = 0L,
     val completedAt: Long = 0L,
     val context: AgentContext = AgentContext(),
+    val llm: AgentSessionLlm = AgentSessionLlm(),
     val todos: List<AgentTodo> = emptyList(),
     val changedFiles: List<String> = emptyList(),
     val diff: String = "",
@@ -210,6 +211,98 @@ data class AgentStateResponse(
     val sessions: List<AgentSession> = emptyList(),
     val worker: AgentWorker = AgentWorker(),
     val model: AgentModelState = AgentModelState(),
+    val llm: AgentLlmCatalog? = null,
+    val error: String? = null,
+    val code: String? = null
+)
+
+// ---------------------------------------------------------------------------
+// User-switchable LLM providers (BYOK + official APIs like Agnes/OpenAI/etc.)
+// ---------------------------------------------------------------------------
+
+@Serializable
+data class AgentSessionLlm(
+    val provider: String = "qwen",
+    val model: String = "qwen3.7-plus",
+    val label: String = "Qwen 3.7 Plus (default)",
+    val official: Boolean = false
+)
+
+@Serializable
+data class AgentLlmModel(
+    val id: String,
+    val label: String = "",
+    val note: String = ""
+) {
+    val displayLabel: String get() = label.ifBlank { id }
+}
+
+@Serializable
+data class AgentLlmProviderEntry(
+    val slug: String,
+    val label: String,
+    val format: String = "openai",
+    val baseUrl: String = "",
+    val contextWindow: Int = 131072,
+    val freeNote: String = "",
+    val official: Boolean = true,
+    val available: Boolean = false,
+    val selectableForAgent: Boolean = true,
+    val keySource: String = "",
+    val keyMasked: String = "",
+    val byokProviderId: String = "",
+    val defaultModel: String = "",
+    val models: List<AgentLlmModel> = emptyList(),
+    // Custom providers only:
+    val id: String = ""
+)
+
+@Serializable
+data class AgentLlmCatalog(
+    val official: List<AgentLlmProviderEntry> = emptyList(),
+    val community: List<AgentLlmProviderEntry> = emptyList(),
+    val custom: List<AgentLlmProviderEntry> = emptyList()
+) {
+    /** Flat picker list: community (selectable) → official → custom. */
+    fun selectableEntries(): List<AgentLlmProviderEntry> =
+        community.filter { it.selectableForAgent && it.available } +
+            official + custom.filter { it.available }
+}
+
+/** A saved BYOK row from GET /llm/providers/. */
+@Serializable
+data class AgentLlmSavedProvider(
+    val id: String,
+    val name: String = "",
+    val provider: String,
+    val apiFormat: String = "openai",
+    val baseUrl: String = "",
+    val keyMasked: String = "",
+    val keySet: Boolean = false,
+    val models: List<String> = emptyList(),
+    val defaultModel: String = "",
+    val contextWindow: Int = 131072,
+    val maxOutputTokens: Int = 4096,
+    val enabled: Boolean = true,
+    val updatedAt: Long = 0
+)
+
+@Serializable
+data class AgentLlmProvidersResponse(
+    val ok: Boolean = false,
+    val providers: List<AgentLlmSavedProvider> = emptyList(),
+    val provider: AgentLlmSavedProvider? = null,
+    val error: String? = null,
+    val code: String? = null
+)
+
+@Serializable
+data class AgentLlmTestResponse(
+    val ok: Boolean = false,
+    val latencyMs: Int = 0,
+    val model: String = "",
+    val reply: String = "",
+    val status: Int = 0,
     val error: String? = null,
     val code: String? = null
 )

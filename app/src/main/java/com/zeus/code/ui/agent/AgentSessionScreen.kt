@@ -156,7 +156,8 @@ internal fun AgentSessionScreen(
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    session.repoFullName,
+                    if (session.llm.label.isBlank()) session.repoFullName
+                    else "${session.repoFullName} · ${session.llm.label}",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
