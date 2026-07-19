@@ -30,8 +30,8 @@ android {
         applicationId = "com.zeus.code"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.1.0"
+        versionCode = 3
+        versionName = "1.1.1"
 
         buildConfigField("String", "OAUTH_CLIENT_ID", "\"${oauthClientId.replace("\"", "\\\"")}\"")
         buildConfigField("String", "OAUTH_CALLBACK", "\"zeus://oauth\"")
@@ -108,7 +108,16 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("org.eclipse.jgit:org.eclipse.jgit:6.10.0.202406032230-r")
+
+    // Stock JGit 6.10 calls Java 9/11+ APIs absent on Android API 26-32
+    // (InputStream.readNBytes/readAllBytes/transferTo, String.strip*, ...) that
+    // core-library desugaring does NOT cover -> every clone crashed mid-way
+    // with NoSuchMethodError on older devices. Use the Android-safe patched
+    // jar (see app/libs/jgit-android-patch-src/README.md) and pin the deps the
+    // upstream pom resolves transitively.
+    implementation(files("libs/jgit-android-6.10.0.202406032230-patch1.jar"))
+    implementation("com.googlecode.javaewah:JavaEWAH:1.2.3")
+    implementation("commons-codec:commons-codec:1.17.0")
     runtimeOnly("org.slf4j:slf4j-nop:2.0.18")
 
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
