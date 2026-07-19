@@ -1379,7 +1379,10 @@ private fun SettingsScreen(
             item { SectionTitle("GitHub account") }
             item {
                 TonalCard {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        modifier = Modifier.height(IntrinsicSize.Min),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Surface(
                             Modifier.size(44.dp),
                             shape = CircleShape,
@@ -1394,14 +1397,16 @@ private fun SettingsScreen(
                             }
                         }
                         Spacer(Modifier.width(12.dp))
-                        Column(Modifier.weight(1f)) {
+                        Column(
+                            modifier = Modifier.weight(1f).heightIn(min = 44.dp),
+                            verticalArrangement = Arrangement.spacedBy(3.dp)
+                        ) {
                             Text(
                                 state.user?.name ?: state.user?.login ?: "Offline user",
                                 style = MaterialTheme.typography.titleSmall,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
-                            Spacer(Modifier.height(3.dp))
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Box(
                                     Modifier.size(7.dp).clip(CircleShape).background(
@@ -1426,7 +1431,7 @@ private fun SettingsScreen(
                             val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/settings/connections/applications"))
                             context.startActivity(intent)
                         },
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
                     ) {
                         Icon(Icons.Rounded.OpenInBrowser, null, Modifier.size(17.dp))
                         Spacer(Modifier.width(8.dp))
@@ -1435,7 +1440,7 @@ private fun SettingsScreen(
                     Spacer(Modifier.height(8.dp))
                     OutlinedButton(
                         onClick = { if (state.authenticated) disconnectConfirm = true else viewModel.logout() },
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
                     ) {
                         Icon(Icons.AutoMirrored.Rounded.Logout, null, Modifier.size(17.dp))
