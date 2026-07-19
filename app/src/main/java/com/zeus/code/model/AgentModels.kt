@@ -1,6 +1,7 @@
 package com.zeus.code.model
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonObject
 
 @Serializable
 data class AgentPairStartResponse(
@@ -58,6 +59,7 @@ data class AgentProject(
     val preferredBaseBranch: String = "main",
     val private: Boolean = false,
     val status: String = "new",
+    val autofixEnabled: Boolean = true,
     val lastSyncedAt: Long = 0L,
     val lastError: String = "",
     val createdAt: Long = 0L,
@@ -111,7 +113,15 @@ data class AgentMessage(
     val content: String = "",
     val label: String = "",
     val attachments: List<AgentAttachment> = emptyList(),
+    val metadata: JsonObject? = null,
     val createdAt: Long = 0L
+)
+
+/** One step in the agent's live plan checklist (see the update_plan tool). */
+@Serializable
+data class AgentTodo(
+    val content: String = "",
+    val status: String = "pending"
 )
 
 @Serializable
@@ -170,6 +180,7 @@ data class AgentSession(
     val updatedAt: Long = 0L,
     val completedAt: Long = 0L,
     val context: AgentContext = AgentContext(),
+    val todos: List<AgentTodo> = emptyList(),
     val changedFiles: List<String> = emptyList(),
     val diff: String = "",
     val messages: List<AgentMessage> = emptyList(),

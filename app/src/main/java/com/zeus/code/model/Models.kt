@@ -172,4 +172,63 @@ data class DeviceLoginState(
     val expiresIn: Int
 )
 
+/* ------------------------------------------------------------------------- */
+/* GitHub Actions                                                            */
+/* ------------------------------------------------------------------------- */
+
+@Serializable
+data class WorkflowRun(
+    val id: Long = 0L,
+    val name: String = "",
+    @SerialName("display_title") val displayTitle: String = "",
+    @SerialName("head_branch") val headBranch: String = "",
+    @SerialName("head_sha") val headSha: String = "",
+    val status: String = "",
+    val conclusion: String? = null,
+    val event: String = "",
+    @SerialName("run_number") val runNumber: Int = 0,
+    @SerialName("html_url") val htmlUrl: String = "",
+    @SerialName("created_at") val createdAt: String = "",
+    @SerialName("updated_at") val updatedAt: String = ""
+)
+
+@Serializable
+data class WorkflowRunsResponse(
+    @SerialName("total_count") val totalCount: Int = 0,
+    @SerialName("workflow_runs") val workflowRuns: List<WorkflowRun> = emptyList()
+)
+
+@Serializable
+data class RunJob(
+    val id: Long = 0L,
+    val name: String = "",
+    val status: String = "",
+    val conclusion: String? = null,
+    @SerialName("html_url") val htmlUrl: String = "",
+    @SerialName("started_at") val startedAt: String? = null,
+    @SerialName("completed_at") val completedAt: String? = null
+)
+
+@Serializable
+data class RunJobsResponse(
+    @SerialName("total_count") val totalCount: Int = 0,
+    val jobs: List<RunJob> = emptyList()
+)
+
+@Serializable
+data class ActionArtifact(
+    val id: Long = 0L,
+    val name: String = "",
+    @SerialName("size_in_bytes") val sizeBytes: Long = 0L,
+    val expired: Boolean = false,
+    @SerialName("archive_download_url") val archiveDownloadUrl: String = "",
+    @SerialName("created_at") val createdAt: String? = null
+)
+
+@Serializable
+data class ArtifactsResponse(
+    @SerialName("total_count") val totalCount: Int = 0,
+    val artifacts: List<ActionArtifact> = emptyList()
+)
+
 enum class MainTab { HOME, AGENT, WORKSPACES, GITHUB }

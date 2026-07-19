@@ -23,11 +23,13 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -54,6 +56,7 @@ import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.ForkRight
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.LinkOff
 import androidx.compose.material.icons.rounded.Lock
@@ -133,7 +136,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.zeus.code.BuildConfig
+import com.zeus.code.model.ActionArtifact
 import com.zeus.code.model.AgentSession
+import com.zeus.code.model.CommitInfo
 import com.zeus.code.model.FileEntry
 import com.zeus.code.model.MainTab
 import com.zeus.code.model.PullRequest
@@ -242,7 +247,7 @@ private fun LoginScreen(state: ZeusState, viewModel: MainViewModel) {
                             Text("Open GitHub")
                         }
                         Spacer(Modifier.height(10.dp))
-                        Text("Zeus is waiting securely for authorization…", style = MaterialTheme.typography.bodyMedium)
+                        Text("Zeus is waiting securely for authorization...", style = MaterialTheme.typography.bodyMedium)
                     }
                 }
             } ?: run {
@@ -319,11 +324,20 @@ private fun MainShell(state: ZeusState, viewModel: MainViewModel, agentViewModel
         }
     }
 
+    // Only the four bottom-nav fragments show shell chrome (top bar + nav bar).
+    // Every detail surface — settings, agent session, workspace viewer,
+    // terminal, editor, repository detail — is a standalone full screen.
+    val standalone = settingsOpen ||
+        route != WorkspaceRoute.List ||
+        (tab == MainTab.AGENT && agentState.selectedSession != null) ||
+        (tab == MainTab.GITHUB && state.selectedRepo != null)
+
     // Hierarchical back handling for every sub-route.
     BackHandler(enabled = route is WorkspaceRoute.Editor) { navWorkspace(WorkspaceRoute.Detail) }
     BackHandler(enabled = route is WorkspaceRoute.Terminal) { navWorkspace(WorkspaceRoute.Detail) }
     BackHandler(enabled = route == WorkspaceRoute.Detail) { viewModel.closeWorkspace() }
     BackHandler(enabled = tab == MainTab.GITHUB && state.selectedRepo != null) { viewModel.closeRepository() }
+    BackHandler(enabled = tab == MainTab.AGENT && agentState.selectedSession != null) { agentViewModel.closeSession() }
     BackHandler(enabled = settingsOpen) { settingsOpen = false }
 
     val refreshAction: (() -> Unit)? = when {
@@ -346,8 +360,7 @@ private fun MainShell(state: ZeusState, viewModel: MainViewModel, agentViewModel
 
     Scaffold(
         topBar = {
-            // Settings is a standalone full-screen surface with its own header.
-            if (route !is WorkspaceRoute.Editor && !settingsOpen) {
+            if (!standalone) {
                 Column {
                     CenterAlignedTopAppBar(
                         title = {
@@ -397,7 +410,7 @@ private fun MainShell(state: ZeusState, viewModel: MainViewModel, agentViewModel
             }
         },
         bottomBar = {
-            if (route !is WorkspaceRoute.Editor && !settingsOpen) {
+            if (!standalone) {
                 NavigationBar {
                     MainTab.entries.forEach { item ->
                         // Badge semantics: only the Agent tab notifies, and only for
@@ -478,10 +491,16 @@ private fun MainShell(state: ZeusState, viewModel: MainViewModel, agentViewModel
                         is WorkspaceRoute.Detail -> WorkspaceDetailScreen(
                             state = state,
                             viewModel = viewModel,
+                            agentState = agentState,
+                            agentViewModel = agentViewModel,
                             onTerminal = { navWorkspace(WorkspaceRoute.Terminal) },
                             onEdit = { navWorkspace(WorkspaceRoute.Editor(it)) }
                         )
-                        is WorkspaceRoute.Terminal -> TerminalScreen(state, viewModel)
+                        is WorkspaceRoute.Terminal -> TerminalScreen(
+                            state = state,
+                            viewModel = viewModel,
+                            onBack = { navWorkspace(WorkspaceRoute.Detail) }
+                        )
                         is WorkspaceRoute.Editor -> FileEditorScreen(
                             entry = route.entry,
                             viewModel = viewModel,
@@ -672,6 +691,12 @@ private fun WorkspaceListScreen(state: ZeusState, viewModel: MainViewModel, onOp
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         uri?.let(viewModel::importWorkspace)
     }
+    val importZipLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let(viewModel::importZipAsWorkspace)
+    }
+    val importFilesLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) viewModel.importFilesAsWorkspace(uris)
+    }
     var createDialog by remember { mutableStateOf(false) }
     var cloneDialog by remember { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<Workspace?>(null) }
@@ -697,6 +722,12 @@ private fun WorkspaceListScreen(state: ZeusState, viewModel: MainViewModel, onOp
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     TonalChip(onClick = { importLauncher.launch(null) }, icon = Icons.Rounded.Upload, label = "Import folder")
+                    TonalChip(
+                        onClick = { importZipLauncher.launch(arrayOf("application/zip", "application/octet-stream", "application/x-zip-compressed")) },
+                        icon = Icons.Rounded.FolderOpen,
+                        label = "Import ZIP"
+                    )
+                    TonalChip(onClick = { importFilesLauncher.launch(arrayOf("*/*")) }, icon = Icons.Rounded.Description, label = "Import files")
                     TonalChip(onClick = { cloneDialog = true }, icon = Icons.Rounded.CloudDownload, label = "Clone URL")
                 }
             }
@@ -705,7 +736,7 @@ private fun WorkspaceListScreen(state: ZeusState, viewModel: MainViewModel, onOp
                     EmptyState(
                         icon = Icons.Rounded.FolderOpen,
                         title = "No workspaces yet",
-                        body = "Import a folder, clone a repository, or create a new project."
+                        body = "Import a folder, files or a ZIP, clone a repository, or create a new project."
                     )
                 }
             } else {
@@ -768,6 +799,8 @@ private fun WorkspaceListScreen(state: ZeusState, viewModel: MainViewModel, onOp
 private fun WorkspaceDetailScreen(
     state: ZeusState,
     viewModel: MainViewModel,
+    agentState: AgentUiState,
+    agentViewModel: BackgroundAgentViewModel,
     onTerminal: () -> Unit,
     onEdit: (FileEntry) -> Unit
 ) {
@@ -775,24 +808,50 @@ private fun WorkspaceDetailScreen(
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         uri?.let(viewModel::exportWorkspace)
     }
+    val importFilesLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) viewModel.importFilesIntoWorkspace(uris)
+    }
+    val importZipLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let(viewModel::importZipIntoWorkspace)
+    }
     var showCommit by remember { mutableStateOf(false) }
     var showBranch by remember { mutableStateOf(false) }
     var showAdvanced by remember { mutableStateOf(false) }
     var showNewPath by remember { mutableStateOf(false) }
+    var showSettings by remember { mutableStateOf(false) }
+    var diffCommit by remember { mutableStateOf<CommitInfo?>(null) }
     var menu by remember { mutableStateOf(false) }
     var section by rememberSaveable(workspace.path) { mutableIntStateOf(0) }
 
     Column(Modifier.fillMaxSize()) {
-        // Header block
+        // Standalone header (no shell chrome on this screen)
+        Row(
+            Modifier.fillMaxWidth().padding(start = 4.dp, end = 16.dp, top = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = viewModel::closeWorkspace) {
+                Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back to workspaces")
+            }
+            Column(Modifier.weight(1f)) {
+                Text(
+                    workspace.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    workspace.currentBranch?.let { "Branch: $it" } ?: workspace.path,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            IconButton(onClick = viewModel::refreshWorkspace) { Icon(Icons.Rounded.Refresh, "Refresh workspace") }
+        }
+        // Actions block
         Column(Modifier.padding(horizontal = 20.dp)) {
-            Text(
-                workspace.path,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(4.dp))
             Row(
                 Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -821,6 +880,21 @@ private fun WorkspaceDetailScreen(
                 Box {
                     IconButton(onClick = { menu = true }) { Icon(Icons.Rounded.MoreVert, "More actions") }
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        DropdownMenuItem(
+                            text = { Text("Import files") },
+                            leadingIcon = { Icon(Icons.Rounded.Description, null) },
+                            onClick = { menu = false; importFilesLauncher.launch(arrayOf("*/*")) }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Import ZIP (replaces duplicates)") },
+                            leadingIcon = { Icon(Icons.Rounded.FolderOpen, null) },
+                            onClick = { menu = false; importZipLauncher.launch(arrayOf("application/zip", "application/octet-stream", "application/x-zip-compressed")) }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Workspace settings") },
+                            leadingIcon = { Icon(Icons.Rounded.Settings, null) },
+                            onClick = { menu = false; showSettings = true }
+                        )
                         if (!workspace.gitRepository) {
                             DropdownMenuItem(
                                 text = { Text("Initialize Git") },
@@ -913,7 +987,7 @@ private fun WorkspaceDetailScreen(
                     }
                 } else {
                     items(state.commits, key = { it.hash }) { commit ->
-                        TonalCard {
+                        TonalCard(onClick = { diffCommit = commit }) {
                             Column {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Surface(
@@ -928,6 +1002,12 @@ private fun WorkspaceDetailScreen(
                                             color = MaterialTheme.colorScheme.onPrimaryContainer
                                         )
                                     }
+                                    Spacer(Modifier.weight(1f))
+                                    Text(
+                                        "View diff",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
                                 }
                                 Spacer(Modifier.height(8.dp))
                                 Text(commit.message, style = MaterialTheme.typography.titleSmall)
@@ -961,6 +1041,107 @@ private fun WorkspaceDetailScreen(
         showNewPath = false
         viewModel.createPath(path, directory)
     }
+    diffCommit?.let { commit ->
+        CommitDiffSheet(viewModel, commit, onDismiss = { diffCommit = null })
+    }
+    if (showSettings) WorkspaceSettingsSheet(
+        workspace = workspace,
+        agentState = agentState,
+        agentViewModel = agentViewModel,
+        onDismiss = { showSettings = false }
+    )
+}
+
+/* ------------------------------------------------------------------------- */
+/* Commit diff + workspace settings sheets                                    */
+/* ------------------------------------------------------------------------- */
+
+@Composable
+private fun CommitDiffSheet(viewModel: MainViewModel, commit: CommitInfo, onDismiss: () -> Unit) {
+    var diff by remember(commit.hash) { mutableStateOf<String?>(null) }
+    LaunchedEffect(commit.hash) { diff = viewModel.commitDiffText(commit.hash) }
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+            Text(
+                "${commit.shortHash} · ${commit.message}",
+                style = MaterialTheme.typography.titleSmall,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                "${commit.author} · ${DateFormat.getDateTimeInstance().format(Date(commit.timestamp))}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(10.dp))
+            when {
+                diff == null -> Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(10.dp))
+                    Text("Building diff...", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                diff!!.isBlank() -> Text(
+                    "No file changes in this commit.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                else -> SelectionContainer {
+                    Column(Modifier.verticalScroll(rememberScrollState()).padding(bottom = 16.dp)) {
+                        DiffView(diff!!)
+                    }
+                }
+            }
+            Spacer(Modifier.height(20.dp))
+        }
+    }
+}
+
+@Composable
+private fun WorkspaceSettingsSheet(
+    workspace: Workspace,
+    agentState: AgentUiState,
+    agentViewModel: BackgroundAgentViewModel,
+    onDismiss: () -> Unit
+) {
+    val project = remember(workspace.remoteUrl, agentState.projects) {
+        val remote = workspace.remoteUrl?.lowercase().orEmpty()
+        if (remote.isBlank()) null
+        else agentState.projects.firstOrNull { remote.contains(it.repoFullName.lowercase()) }
+    }
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
+            Text("${workspace.name} · settings", style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Spacer(Modifier.height(14.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Auto-fix CI failures", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        when {
+                            !agentState.authorized -> "Connect NEBians from the Agent tab to use auto-fix."
+                            project == null -> "Add this repository as an agent project to enable auto-fix."
+                            else -> "When a GitHub Actions run fails, the background agent receives the error log and pushes a fix."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = project?.autofixEnabled ?: false,
+                    onCheckedChange = { checked -> project?.let { agentViewModel.setProjectAutofix(it, checked) } },
+                    enabled = agentState.authorized && project != null
+                )
+            }
+            project?.let {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "Linked agent project: ${it.repoFullName}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Spacer(Modifier.height(26.dp))
+        }
+    }
 }
 
 /* ------------------------------------------------------------------------- */
@@ -968,14 +1149,17 @@ private fun WorkspaceDetailScreen(
 /* ------------------------------------------------------------------------- */
 
 @Composable
-private fun TerminalScreen(state: ZeusState, viewModel: MainViewModel) {
+private fun TerminalScreen(state: ZeusState, viewModel: MainViewModel, onBack: () -> Unit) {
     var command by rememberSaveable { mutableStateOf("") }
     val workspace = state.selectedWorkspace ?: return
     Column(Modifier.fillMaxSize().imePadding()) {
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp),
+            Modifier.fillMaxWidth().padding(start = 4.dp, end = 8.dp, top = 6.dp, bottom = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            IconButton(onClick = onBack, modifier = Modifier.size(34.dp)) {
+                Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back to workspace")
+            }
             Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = MaterialTheme.shapes.small) {
                 Text(
                     workspace.name,
@@ -1087,13 +1271,74 @@ private fun FileEditorScreen(entry: FileEntry, viewModel: MainViewModel, onClose
                 Spacer(Modifier.height(10.dp))
                 Text(error.orEmpty(), color = MaterialTheme.colorScheme.error)
             }
-            else -> OutlinedTextField(
-                value = text,
-                onValueChange = { text = it; dirty = true },
-                modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp),
-                textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
-                shape = MaterialTheme.shapes.large
-            )
+            else -> Column(Modifier.fillMaxSize().imePadding()) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "${text.count { it == '\n' } + 1} lines",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.weight(1f))
+                    if (dirty) {
+                        Text("Unsaved", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                    }
+                }
+                NumberedCodeEditor(
+                    value = text,
+                    onValueChange = { text = it; dirty = true },
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+        }
+    }
+}
+
+/** Monospace code editor with a synced line-number gutter and 2-axis scrolling. */
+@Composable
+private fun NumberedCodeEditor(value: String, onValueChange: (String) -> Unit, modifier: Modifier = Modifier) {
+    val vertical = rememberScrollState()
+    val horizontal = rememberScrollState()
+    val ink = Color(0xFFEAE6F2)
+    val codeStyle = MaterialTheme.typography.bodySmall.copy(
+        fontFamily = FontFamily.Monospace,
+        fontSize = 12.5.sp,
+        lineHeight = 18.sp,
+        color = ink
+    )
+    val lineCount = (value.count { it == '\n' } + 1).coerceAtMost(20000)
+    Surface(modifier = modifier, color = Color(0xFF131118)) {
+        Row(Modifier.fillMaxSize()) {
+            Column(
+                Modifier.verticalScroll(vertical).padding(start = 10.dp, end = 8.dp, top = 10.dp, bottom = 10.dp),
+                horizontalAlignment = Alignment.End
+            ) {
+                repeat(lineCount) { index ->
+                    Text(
+                        "${index + 1}",
+                        style = codeStyle,
+                        color = Color(0xFF726C83)
+                    )
+                }
+            }
+            Box(
+                Modifier
+                    .weight(1f)
+                    .verticalScroll(vertical)
+                    .horizontalScroll(horizontal)
+            ) {
+                BasicTextField(
+                    value = value,
+                    onValueChange = onValueChange,
+                    textStyle = codeStyle,
+                    cursorBrush = androidx.compose.ui.graphics.SolidColor(ink),
+                    modifier = Modifier
+                        .padding(top = 10.dp, bottom = 10.dp, end = 12.dp)
+                        .widthIn(min = 300.dp)
+                )
+            }
         }
     }
 }
@@ -1152,9 +1397,13 @@ private fun GitHubListScreen(state: ZeusState, viewModel: MainViewModel) {
             }
         }
     }
-    if (createDialog) NewRepositoryDialog(onDismiss = { createDialog = false }) { name, description, private, init ->
+    if (createDialog) NewRepositoryDialog(onDismiss = { createDialog = false }) { name, description, private, init, zipUri, fileUris ->
         createDialog = false
-        viewModel.createRepository(name, description, private, init)
+        if (zipUri != null || fileUris.isNotEmpty()) {
+            viewModel.createRepositoryFromContent(name, description, private, zipUri, fileUris)
+        } else {
+            viewModel.createRepository(name, description, private, init)
+        }
     }
 }
 
@@ -1169,14 +1418,34 @@ private fun RepositoryDetailScreen(state: ZeusState, viewModel: MainViewModel, r
     val uriHandler = LocalUriHandler.current
 
     Column(Modifier.fillMaxSize()) {
+        // Standalone header (no shell chrome on this screen)
+        Row(
+            Modifier.fillMaxWidth().padding(start = 4.dp, end = 16.dp, top = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = viewModel::closeRepository) {
+                Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back to repositories")
+            }
+            Column(Modifier.weight(1f)) {
+                Text(repo.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    repo.owner.login,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            IconButton(onClick = viewModel::refreshSelectedRepository) { Icon(Icons.Rounded.Refresh, "Refresh repository") }
+        }
         Column(Modifier.padding(horizontal = 20.dp)) {
-            Spacer(Modifier.height(4.dp))
-            Text(repo.owner.login, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(2.dp))
             Text(
                 repo.description ?: "No description",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 4.dp)
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
             )
             Spacer(Modifier.height(10.dp))
             Row(
@@ -1223,6 +1492,7 @@ private fun RepositoryDetailScreen(state: ZeusState, viewModel: MainViewModel, r
                 Tab(tab == 0, { tab = 0 }, text = { Text("Overview") })
                 Tab(tab == 1, { tab = 1 }, text = { Text("Pulls (${state.pullRequests.size})") })
                 Tab(tab == 2, { tab = 2 }, text = { Text("Issues (${state.issues.size})") })
+                Tab(tab == 3, { tab = 3 }, text = { Text("Actions (${state.actionRuns.size})") })
             }
         }
 
@@ -1287,6 +1557,7 @@ private fun RepositoryDetailScreen(state: ZeusState, viewModel: MainViewModel, r
                     }
                 }
             }
+            3 -> ActionsTabContent(state, viewModel)
         }
     }
 
@@ -1312,6 +1583,163 @@ private fun RepositoryDetailScreen(state: ZeusState, viewModel: MainViewModel, r
             reviewPull = null
             viewModel.reviewPull(pull, body, event)
         }
+    }
+}
+
+/* ------------------------------------------------------------------------- */
+/* GitHub Actions tab                                                         */
+/* ------------------------------------------------------------------------- */
+
+@Composable
+private fun ActionsTabContent(state: ZeusState, viewModel: MainViewModel) {
+    val uriHandler = LocalUriHandler.current
+    val context = LocalContext.current
+    var pendingArtifact by remember { mutableStateOf<ActionArtifact?>(null) }
+    val saveLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
+        val artifact = pendingArtifact
+        pendingArtifact = null
+        if (uri != null && artifact != null) {
+            context.contentResolver.openOutputStream(uri)?.let { viewModel.downloadActionArtifact(artifact, it) }
+        }
+    }
+    if (state.actionRuns.isEmpty()) {
+        EmptyState(
+            Icons.Rounded.Bolt,
+            "No workflow runs yet",
+            "When this repository runs GitHub Actions workflows, they appear here with jobs and downloadable artifacts."
+        )
+        return
+    }
+    LazyColumn(
+        contentPadding = PaddingValues(20.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        items(state.actionRuns, key = { it.id }) { run ->
+            val expanded = state.expandedRunId == run.id
+            OutlinedCard(Modifier.fillMaxWidth().clickable { viewModel.expandActionRun(run) }) {
+                Column(Modifier.padding(horizontal = 13.dp, vertical = 11.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RunStatusIcon(run.status, run.conclusion)
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                run.displayTitle.ifBlank { run.name },
+                                style = MaterialTheme.typography.titleSmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                buildString {
+                                    append("#${run.runNumber} · ${run.name} · ${run.headBranch}")
+                                    run.conclusion?.let { append(" · $it") }
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        Icon(
+                            if (expanded) Icons.Rounded.KeyboardArrowDown else Icons.Rounded.KeyboardArrowRight,
+                            if (expanded) "Collapse" else "Expand",
+                            Modifier.size(18.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    if (expanded) {
+                        Spacer(Modifier.height(8.dp))
+                        HorizontalDivider()
+                        Spacer(Modifier.height(8.dp))
+                        if (state.actionJobs.isEmpty() && state.actionArtifacts.isEmpty()) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 1.5.dp)
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    "Loading run details...",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        state.actionJobs.forEach { job ->
+                            Row(
+                                Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RunStatusIcon(job.status, job.conclusion, size = 14)
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    job.name,
+                                    Modifier.weight(1f),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    job.conclusion ?: job.status,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        if (state.actionArtifacts.isNotEmpty()) {
+                            Spacer(Modifier.height(6.dp))
+                            Text("Artifacts", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Spacer(Modifier.height(4.dp))
+                            state.actionArtifacts.forEach { artifact ->
+                                Row(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .clip(MaterialTheme.shapes.small)
+                                        .clickable(enabled = !artifact.expired) {
+                                            pendingArtifact = artifact
+                                            saveLauncher.launch("${artifact.name}.zip")
+                                        }
+                                        .padding(vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        Icons.Rounded.CloudDownload,
+                                        null,
+                                        Modifier.size(16.dp),
+                                        tint = if (artifact.expired) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.primary
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(
+                                        artifact.name + if (artifact.expired) " (expired)" else "",
+                                        Modifier.weight(1f),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        formatSize(artifact.sizeBytes),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                        TextButton(onClick = { uriHandler.openUri(run.htmlUrl) }, modifier = Modifier.align(Alignment.End)) {
+                            Text("Open run on GitHub", maxLines = 1)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RunStatusIcon(status: String, conclusion: String?, size: Int = 18) {
+    when {
+        status == "completed" && conclusion == "success" ->
+            Icon(Icons.Rounded.Check, null, Modifier.size(size.dp), tint = MaterialTheme.colorScheme.tertiary)
+        status == "completed" && (conclusion == "failure" || conclusion == "timed_out") ->
+            Icon(Icons.Rounded.ErrorOutline, null, Modifier.size(size.dp), tint = MaterialTheme.colorScheme.error)
+        status == "completed" ->
+            Icon(Icons.Rounded.Check, null, Modifier.size(size.dp), tint = MaterialTheme.colorScheme.outline)
+        else -> CircularProgressIndicator(Modifier.size((size - 2).dp), strokeWidth = 2.dp)
     }
 }
 
@@ -1548,6 +1976,8 @@ private fun TonalCard(
     val colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
     val shape = MaterialTheme.shapes.large
     val elevation = CardDefaults.elevatedCardElevation(defaultElevation = 0.dp)
+    // Content goes in a Column — cards that emit several children (rows,
+    // spacers, buttons) must lay out vertically, never stack in a Box.
     if (onClick != null) {
         ElevatedCard(
             onClick = onClick,
@@ -1555,14 +1985,14 @@ private fun TonalCard(
             shape = shape,
             colors = colors,
             elevation = elevation
-        ) { Box(Modifier.padding(16.dp)) { content() } }
+        ) { Column(Modifier.padding(16.dp)) { content() } }
     } else {
         ElevatedCard(
             modifier = Modifier.fillMaxWidth(),
             shape = shape,
             colors = colors,
             elevation = elevation
-        ) { Box(Modifier.padding(16.dp)) { content() } }
+        ) { Column(Modifier.padding(16.dp)) { content() } }
     }
 }
 
@@ -1734,7 +2164,7 @@ private fun PullRow(pull: PullRequest, onMerge: () -> Unit, onReview: () -> Unit
         Column {
             Text("#${pull.number} · ${pull.title}", style = MaterialTheme.typography.titleSmall)
             Text(
-                "${pull.head.ref} → ${pull.base.ref} · ${pull.user.login}",
+                "${pull.head.ref} > ${pull.base.ref} · ${pull.user.login}",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
@@ -1802,11 +2232,23 @@ private fun CloneDialog(onDismiss: () -> Unit, onClone: (String, String) -> Unit
 }
 
 @Composable
-private fun NewRepositoryDialog(onDismiss: () -> Unit, onCreate: (String, String, Boolean, Boolean) -> Unit) {
+private fun NewRepositoryDialog(
+    onDismiss: () -> Unit,
+    onCreate: (String, String, Boolean, Boolean, Uri?, List<Uri>) -> Unit
+) {
     var name by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
     var private by remember { mutableStateOf(false) }
     var init by remember { mutableStateOf(true) }
+    var zipUri by remember { mutableStateOf<Uri?>(null) }
+    var fileUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
+    val zipLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let { zipUri = it; fileUris = emptyList(); init = false }
+    }
+    val filesLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) { fileUris = uris; zipUri = null; init = false }
+    }
+    val hasContent = zipUri != null || fileUris.isNotEmpty()
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Create repository") },
@@ -1819,13 +2261,39 @@ private fun NewRepositoryDialog(onDismiss: () -> Unit, onCreate: (String, String
                     Spacer(Modifier.width(10.dp))
                     Text("Private repository")
                 }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(init, { init = it })
-                    Text("Initialize with README")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = { zipLauncher.launch(arrayOf("application/zip", "application/octet-stream", "application/x-zip-compressed")) },
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
+                    ) { Text(if (zipUri != null) "ZIP attached" else "Attach ZIP", maxLines = 1) }
+                    OutlinedButton(
+                        onClick = { filesLauncher.launch(arrayOf("*/*")) },
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
+                    ) { Text(if (fileUris.isNotEmpty()) "${fileUris.size} file(s)" else "Attach files", maxLines = 1) }
+                }
+                if (hasContent) {
+                    Text(
+                        "The repository will be created and your content pushed as the initial commit.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    TextButton(onClick = { zipUri = null; fileUris = emptyList() }) { Text("Remove attachment") }
+                } else {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(init, { init = it })
+                        Text("Initialize with README")
+                    }
                 }
             }
         },
-        confirmButton = { Button(onClick = { onCreate(name, description, private, init) }, enabled = name.isNotBlank()) { Text("Create") } },
+        confirmButton = {
+            Button(
+                onClick = { onCreate(name, description, private, if (hasContent) false else init, zipUri, fileUris) },
+                enabled = name.isNotBlank()
+            ) { Text("Create") }
+        },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }
@@ -1856,7 +2324,7 @@ private fun BranchSheet(viewModel: MainViewModel, onDismiss: () -> Unit, onCheck
                 branches == null -> Row(verticalAlignment = Alignment.CenterVertically) {
                     CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                     Spacer(Modifier.width(10.dp))
-                    Text("Loading branches…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Loading branches...", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 !branches.isNullOrEmpty() -> Column(Modifier.verticalScroll(rememberScrollState())) {
                     branches!!.forEach { name ->

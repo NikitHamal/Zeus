@@ -80,7 +80,7 @@ class BackgroundAgentViewModel(application: Application) : AndroidViewModel(appl
         }
     }
 
-    fun startPairing() = task("Creating secure device authorization…") {
+    fun startPairing() = task("Creating secure device authorization...") {
         pairingJob?.cancel()
         val response = api.startPairing("Zeus Android")
         val pairing = AgentPairingState(
@@ -119,11 +119,11 @@ class BackgroundAgentViewModel(application: Application) : AndroidViewModel(appl
         refreshState()
     }
 
-    fun loadRepositories() = task("Loading GitHub repositories…") {
+    fun loadRepositories() = task("Loading GitHub repositories...") {
         _state.update { it.copy(repositories = api.repositories(requireToken()).repositories) }
     }
 
-    fun selectRepository(repository: AgentRepository) = task("Loading branches…") {
+    fun selectRepository(repository: AgentRepository) = task("Loading branches...") {
         val response = api.branches(requireToken(), repository.fullName)
         _state.update {
             it.copy(
@@ -140,7 +140,7 @@ class BackgroundAgentViewModel(application: Application) : AndroidViewModel(appl
         it.copy(selectedRepository = null, branches = emptyList(), selectedBranch = "", repositoryQuery = "")
     }
 
-    fun addSelectedProject(onAdded: (() -> Unit)? = null) = task("Adding project…") {
+    fun addSelectedProject(onAdded: (() -> Unit)? = null) = task("Adding project...") {
         val repo = _state.value.selectedRepository ?: error("Choose a repository first.")
         val branch = _state.value.selectedBranch.ifBlank { repo.defaultBranch }
         val project = api.addProject(requireToken(), repo.fullName, branch).project
@@ -152,7 +152,24 @@ class BackgroundAgentViewModel(application: Application) : AndroidViewModel(appl
 
     fun selectProject(project: AgentProject?) = _state.update { it.copy(selectedProject = project) }
 
-    fun createSession(goal: String, uploads: List<AgentUpload>, onCreated: (() -> Unit)? = null) = task("Starting background task…") {
+    /** Toggle the per-project CI auto-fix automation (applied to new failed runs). */
+    fun setProjectAutofix(project: AgentProject, enabled: Boolean) = task(null) {
+        val updated = api.updateProjectSettings(requireToken(), project.id, enabled).project
+        _state.update { state ->
+            state.copy(
+                projects = state.projects.map { if (it.id == updated.id) updated else it },
+                selectedProject = state.selectedProject?.let { if (it.id == updated.id) updated else it },
+                message = if (enabled) {
+                    "Auto-fix enabled for ${project.repoFullName}."
+                } else {
+                    "Auto-fix disabled for ${project.repoFullName}."
+                }
+            )
+        }
+        runCatching { refreshState() }
+    }
+
+    fun createSession(goal: String, uploads: List<AgentUpload>, onCreated: (() -> Unit)? = null) = task("Starting background task...") {
         val project = _state.value.selectedProject ?: error("Choose a project first.")
         val session = api.createSession(
             requireToken(), project.id, goal.trim(), project.preferredBaseBranch, uploads
@@ -186,7 +203,7 @@ class BackgroundAgentViewModel(application: Application) : AndroidViewModel(appl
         _state.update { it.copy(unreadIds = computeUnread(it.sessions)) }
     }
 
-    fun sendMessage(content: String, uploads: List<AgentUpload>, onSent: (() -> Unit)? = null) = task("Sending guidance…") {
+    fun sendMessage(content: String, uploads: List<AgentUpload>, onSent: (() -> Unit)? = null) = task("Sending guidance...") {
         val session = requireSession()
         api.sendMessage(requireToken(), session.id, content.trim(), uploads)
         reloadSelected()
@@ -194,41 +211,41 @@ class BackgroundAgentViewModel(application: Application) : AndroidViewModel(appl
         toast("Guidance added to the task.")
     }
 
-    fun control(command: String) = task("Sending ${command.lowercase()} request…") {
+    fun control(command: String) = task("Sending ${command.lowercase()} request...") {
         val session = requireSession()
         _state.update { it.copy(selectedSession = api.control(requireToken(), session.id, command).session) }
         reloadSelected()
     }
 
-    fun runAction(name: String) = task("Queueing action…") {
+    fun runAction(name: String) = task("Queueing action...") {
         api.action(requireToken(), requireSession().id, name)
         reloadSelected()
         toast("Action queued.")
     }
 
-    fun archive(session: AgentSession = requireSession()) = task("Archiving task…") {
+    fun archive(session: AgentSession = requireSession()) = task("Archiving task...") {
         api.lifecycle(requireToken(), session.id, "archive")
         if (_state.value.selectedSession?.id == session.id) _state.update { it.copy(selectedSession = null) }
         refreshState()
     }
 
-    fun restore(session: AgentSession = requireSession()) = task("Restoring task…") {
+    fun restore(session: AgentSession = requireSession()) = task("Restoring task...") {
         api.lifecycle(requireToken(), session.id, "restore")
         refreshState()
     }
 
-    fun delete(session: AgentSession = requireSession()) = task("Deleting task…") {
+    fun delete(session: AgentSession = requireSession()) = task("Deleting task...") {
         api.deleteSession(requireToken(), session.id)
         if (_state.value.selectedSession?.id == session.id) _state.update { it.copy(selectedSession = null) }
         refreshState()
     }
 
-    fun prepareUploads(uris: List<Uri>, onReady: (List<AgentUpload>) -> Unit) = task("Reading attachments…") {
+    fun prepareUploads(uris: List<Uri>, onReady: (List<AgentUpload>) -> Unit) = task("Reading attachments...") {
         val uploads = withContext(Dispatchers.IO) { readUploads(uris) }
         onReady(uploads)
     }
 
-    fun downloadArtifact(downloadUrl: String, output: OutputStream, onComplete: () -> Unit) = task("Downloading artifact…") {
+    fun downloadArtifact(downloadUrl: String, output: OutputStream, onComplete: () -> Unit) = task("Downloading artifact...") {
         try {
             api.download(requireToken(), downloadUrl, output)
         } finally {

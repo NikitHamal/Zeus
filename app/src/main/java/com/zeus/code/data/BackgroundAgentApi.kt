@@ -80,6 +80,15 @@ class BackgroundAgentApi {
         token = token
     )
 
+    /** Updates per-project automation settings (currently the auto-fix flag). */
+    suspend fun updateProjectSettings(token: String, projectId: String, autofixEnabled: Boolean): AgentProjectResponse = postJson(
+        path = "/projects/$projectId/settings/",
+        body = buildJsonObject {
+            put("autofixEnabled", autofixEnabled)
+        }.toString(),
+        token = token
+    )
+
     suspend fun createSession(
         token: String,
         projectId: String,

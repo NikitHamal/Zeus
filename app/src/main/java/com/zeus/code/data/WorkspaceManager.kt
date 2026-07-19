@@ -2,12 +2,14 @@ package com.zeus.code.data
 
 import android.content.Context
 import android.net.Uri
+import android.provider.OpenableColumns
 import androidx.documentfile.provider.DocumentFile
 import com.zeus.code.model.FileEntry
 import com.zeus.code.model.Workspace
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.zip.ZipFile
 
 class WorkspaceManager(private val context: Context, private val gitService: GitService) {
     private val root = File(context.filesDir, "workspaces").apply { mkdirs() }
@@ -50,6 +52,114 @@ class WorkspaceManager(private val context: Context, private val gitService: Git
         val target = DocumentFile.fromTreeUri(context, uri) ?: error("Unable to open export folder.")
         copyFileTreeToDocument(workspace.directory, target)
     }
+
+    /** Copies picked documents into the workspace root. Same-named files are replaced. */
+    suspend fun importFiles(workspace: Workspace, uris: List<Uri>): Int = withContext(Dispatchers.IO) {
+        require(workspace.directory.canonicalPath.startsWith(root.canonicalPath)) { "Invalid workspace path." }
+        var count = 0
+        uris.take(200).forEach { uri ->
+            val name = queryDisplayName(uri)?.sanitizeEntryName() ?: return@forEach
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                val target = File(workspace.directory, name)
+                target.outputStream().use { input.copyTo(it) }
+                count++
+            }
+        }
+        count
+    }
+
+    /**
+     * Extracts [zipUri] into [targetDir].
+     *  - ZIP-slip paths and `.git/` entries are rejected/skipped.
+     *  - Existing files with the same path are replaced cleanly (truncate+write).
+     *  - If every entry lives under one top-level folder (the typical AI-chat
+     *    export), that wrapper folder is stripped so content lands at the root.
+     */
+    suspend fun importZipInto(targetDir: File, zipUri: Uri): Int = withContext(Dispatchers.IO) {
+        val source = File(context.cacheDir, "imports/incoming-${System.currentTimeMillis()}.zip")
+        try {
+            source.parentFile?.mkdirs()
+            context.contentResolver.openInputStream(zipUri)?.use { input ->
+                source.outputStream().use { input.copyTo(it) }
+            } ?: error("Unable to read the selected ZIP file.")
+            require(source.length() <= 300L * 1024L * 1024L) { "ZIP is larger than 300 MB." }
+
+            val rootCanonical = targetDir.canonicalFile
+            var count = 0
+            ZipFile(source).use { zip ->
+                val entries = zip.entries().asSequence()
+                    .filter { it.name.isNotBlank() && it.name != ".git" && !it.name.startsWith(".git/", ignoreCase = true) }
+                    .toList()
+                require(entries.isNotEmpty()) { "The ZIP file is empty." }
+                // Detect a single common wrapper folder like "project-x/...".
+                val names = entries.map { it.name.trimStart('/') }
+                val wrapper = names.first().substringBefore('/', "").takeIf { prefix ->
+                    prefix.isNotBlank() && names.all { it.startsWith("$prefix/") || it == prefix }
+                }
+                entries.forEach { entry ->
+                    var relative = entry.name.trimStart('/')
+                    if (wrapper != null) {
+                        relative = if (relative == wrapper) "" else relative.removePrefix("$wrapper/")
+                        if (relative.isBlank()) return@forEach
+                    }
+                    val target = File(rootCanonical, relative).canonicalFile
+                    require(
+                        target.path == rootCanonical.path ||
+                            target.path.startsWith(rootCanonical.path + File.separator)
+                    ) { "ZIP contains an unsafe path (${entry.name})." }
+                    if (entry.isDirectory) {
+                        target.mkdirs()
+                    } else {
+                        target.parentFile?.mkdirs()
+                        zip.getInputStream(entry).use { input ->
+                            target.outputStream().use { input.copyTo(it) }
+                            count++
+                        }
+                    }
+                }
+            }
+            count
+        } finally {
+            source.delete()
+            source.parentFile?.let { dir -> if (dir.list().isNullOrEmpty()) dir.delete() }
+        }
+    }
+
+    /** Creates a brand-new workspace whose content comes from a ZIP file. */
+    suspend fun importZipAsWorkspace(zipUri: Uri, preferredName: String?): Workspace = withContext(Dispatchers.IO) {
+        val fallback = queryDisplayName(zipUri)?.removeSuffix(".zip") ?: "workspace-${System.currentTimeMillis()}"
+        val target = uniqueDestination(preferredName?.takeIf { it.isNotBlank() } ?: fallback)
+        target.mkdirs()
+        try {
+            importZipInto(target, zipUri)
+        } catch (error: Throwable) {
+            target.deleteRecursively()
+            throw error
+        }
+        workspace(target)
+    }
+
+    /** Creates a brand-new workspace from a set of picked documents. */
+    suspend fun importFilesAsWorkspace(uris: List<Uri>, preferredName: String?): Workspace = withContext(Dispatchers.IO) {
+        val target = uniqueDestination(preferredName?.takeIf { it.isNotBlank() } ?: "workspace-${System.currentTimeMillis()}")
+        target.mkdirs()
+        uris.take(200).forEach { uri ->
+            val name = queryDisplayName(uri)?.sanitizeEntryName() ?: return@forEach
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                File(target, name).outputStream().use { input.copyTo(it) }
+            }
+        }
+        workspace(target)
+    }
+
+    private fun queryDisplayName(uri: Uri): String? = runCatching {
+        context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) cursor.getString(0) else null
+        }
+    }.getOrNull() ?: uri.lastPathSegment?.substringAfterLast('/')
+
+    private fun String.sanitizeEntryName(): String =
+        replace(Regex("[\\\\/:*?\"<>|]"), "-").trim().ifBlank { "file-${System.currentTimeMillis()}" }
 
     suspend fun create(name: String, initializeGit: Boolean): Workspace = withContext(Dispatchers.IO) {
         val target = uniqueDestination(name)

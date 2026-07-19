@@ -132,11 +132,9 @@ private val ZeusShapes = Shapes(
 )
 
 /* ------------------------------------------------------------------------- */
-/* Typography — compact M3 ramp.                                              */
-/* Brand voice stays on Poppins for display/headings/titles. Body & label    */
-/* text use the platform font: Poppins lacks many glyphs (arrows, box        */
-/* drawing, math, CJK…) which previously rendered as tofu — the platform     */
-/* font has full fallback coverage.                                           */
+/* Typography — compact M3 ramp, Poppins everywhere per design decision.     */
+/* UI copy avoids characters Poppins lacks (arrows, checkmarks, box glyphs)  */
+/* so nothing renders as tofu.                                               */
 /* ------------------------------------------------------------------------- */
 
 private val provider = GoogleFont.Provider(
@@ -158,8 +156,6 @@ private val Poppins = FontFamily(
     poppins(FontWeight.Bold)
 )
 
-private val PlatformFont = FontFamily.Default
-
 private val ZeusTypography = Typography(
     displayLarge = TextStyle(fontFamily = Poppins, fontWeight = FontWeight.Bold, fontSize = 45.sp, lineHeight = 52.sp, letterSpacing = (-0.25).sp),
     displayMedium = TextStyle(fontFamily = Poppins, fontWeight = FontWeight.Bold, fontSize = 36.sp, lineHeight = 42.sp),
@@ -170,12 +166,12 @@ private val ZeusTypography = Typography(
     titleLarge = TextStyle(fontFamily = Poppins, fontWeight = FontWeight.SemiBold, fontSize = 17.sp, lineHeight = 22.sp),
     titleMedium = TextStyle(fontFamily = Poppins, fontWeight = FontWeight.Medium, fontSize = 15.sp, lineHeight = 20.sp, letterSpacing = 0.1.sp),
     titleSmall = TextStyle(fontFamily = Poppins, fontWeight = FontWeight.Medium, fontSize = 13.sp, lineHeight = 17.sp, letterSpacing = 0.1.sp),
-    bodyLarge = TextStyle(fontFamily = PlatformFont, fontWeight = FontWeight.Normal, fontSize = 14.5.sp, lineHeight = 20.sp, letterSpacing = 0.25.sp),
-    bodyMedium = TextStyle(fontFamily = PlatformFont, fontWeight = FontWeight.Normal, fontSize = 13.sp, lineHeight = 18.sp, letterSpacing = 0.2.sp),
-    bodySmall = TextStyle(fontFamily = PlatformFont, fontWeight = FontWeight.Normal, fontSize = 11.5.sp, lineHeight = 15.sp, letterSpacing = 0.3.sp),
+    bodyLarge = TextStyle(fontFamily = Poppins, fontWeight = FontWeight.Normal, fontSize = 14.5.sp, lineHeight = 20.sp, letterSpacing = 0.25.sp),
+    bodyMedium = TextStyle(fontFamily = Poppins, fontWeight = FontWeight.Normal, fontSize = 13.sp, lineHeight = 18.sp, letterSpacing = 0.2.sp),
+    bodySmall = TextStyle(fontFamily = Poppins, fontWeight = FontWeight.Normal, fontSize = 11.5.sp, lineHeight = 15.sp, letterSpacing = 0.3.sp),
     labelLarge = TextStyle(fontFamily = Poppins, fontWeight = FontWeight.Medium, fontSize = 13.sp, lineHeight = 17.sp, letterSpacing = 0.1.sp),
-    labelMedium = TextStyle(fontFamily = PlatformFont, fontWeight = FontWeight.Medium, fontSize = 11.sp, lineHeight = 14.sp, letterSpacing = 0.4.sp),
-    labelSmall = TextStyle(fontFamily = PlatformFont, fontWeight = FontWeight.Medium, fontSize = 10.sp, lineHeight = 13.sp, letterSpacing = 0.4.sp)
+    labelMedium = TextStyle(fontFamily = Poppins, fontWeight = FontWeight.Medium, fontSize = 11.sp, lineHeight = 14.sp, letterSpacing = 0.4.sp),
+    labelSmall = TextStyle(fontFamily = Poppins, fontWeight = FontWeight.Medium, fontSize = 10.sp, lineHeight = 13.sp, letterSpacing = 0.4.sp)
 )
 
 /* ------------------------------------------------------------------------- */

@@ -35,8 +35,10 @@ import androidx.compose.material.icons.rounded.AttachFile
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.CallMerge
 import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.Checklist
 import androidx.compose.material.icons.rounded.CloudDownload
 import androidx.compose.material.icons.rounded.Code
+import androidx.compose.material.icons.rounded.Compress
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.CreateNewFolder
 import androidx.compose.material.icons.rounded.Delete
@@ -47,10 +49,15 @@ import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.FolderZip
 import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.OpenInBrowser
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.PlayCircle
+import androidx.compose.material.icons.rounded.Psychology
+import androidx.compose.material.icons.rounded.RadioButtonUnchecked
 import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material.icons.rounded.Restore
 import androidx.compose.material.icons.rounded.Search
@@ -86,20 +93,29 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.zeus.code.model.AgentArtifact
 import com.zeus.code.model.AgentMessage
 import com.zeus.code.model.AgentSession
+import com.zeus.code.model.AgentTodo
 import com.zeus.code.model.AgentUpload
 import com.zeus.code.model.Workspace
+import com.zeus.code.ui.DiffView
 import java.text.DateFormat
 import java.util.Date
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
 
 /* ======================================================================= */
 /* Session — chat-first layout with a pinned composer                       */
@@ -152,6 +168,11 @@ internal fun AgentSessionScreen(
                     Icon(Icons.Rounded.MoreVert, "Task options")
                 }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    DropdownMenuItem(
+                        text = { Text("Compact context") },
+                        onClick = { menu = false; viewModel.sendMessage("/compact", emptyList()) {} },
+                        leadingIcon = { Icon(Icons.Rounded.Compress, null) }
+                    )
                     DropdownMenuItem(
                         text = { Text(if (session.archived) "Restore" else "Archive") },
                         enabled = !active,
@@ -295,10 +316,15 @@ private fun ActivityTab(session: AgentSession, state: AgentUiState, viewModel: B
                     )
                 }
             }
+            if (session.todos.isNotEmpty()) {
+                item { AgentPlanCard(session.todos) }
+            }
             items(session.messages, key = { it.id }) { message ->
-                when (message.role) {
-                    "user" -> UserBubble(message)
-                    "tool" -> ToolCallRow(message)
+                when {
+                    message.isThought -> ThoughtRow(message)
+                    message.isCommand -> CommandRow(message)
+                    message.role == "user" -> UserBubble(message)
+                    message.role == "tool" -> ToolCallRow(message)
                     else -> AssistantBubble(message)
                 }
             }
@@ -311,7 +337,7 @@ private fun ActivityTab(session: AgentSession, state: AgentUiState, viewModel: B
                         CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 1.5.dp)
                         Spacer(Modifier.width(8.dp))
                         Text(
-                            session.progressLabel.ifBlank { "Working…" },
+                            session.progressLabel.ifBlank { "Working..." },
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
@@ -354,7 +380,7 @@ private fun ActivityTab(session: AgentSession, state: AgentUiState, viewModel: B
                         value = guidance,
                         onValueChange = { guidance = it },
                         modifier = Modifier.weight(1f),
-                        placeholder = { Text("Guide the agent…", style = MaterialTheme.typography.bodyMedium) },
+                        placeholder = { Text("Guide the agent...", style = MaterialTheme.typography.bodyMedium) },
                         textStyle = MaterialTheme.typography.bodyMedium,
                         minLines = 1,
                         maxLines = 5,
@@ -454,7 +480,7 @@ private fun AssistantBubble(message: AgentMessage) {
                 if (message.content.isNotBlank()) {
                     MarkdownContent(message.content, textSize = MaterialTheme.typography.bodyMedium.fontSize)
                 } else {
-                    Text(message.label.ifBlank { "…" }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(message.label.ifBlank { "..." }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
@@ -471,6 +497,193 @@ private fun MessageTime(timestamp: Long) {
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
     )
+}
+
+/* ======================================================================= */
+/* Message metadata helpers — thought chips, slash commands, tool status    */
+/* ======================================================================= */
+
+private fun AgentMessage.metaString(key: String): String =
+    metadata?.get(key)?.jsonPrimitive?.contentOrNull.orEmpty()
+
+private val AgentMessage.isThought: Boolean
+    get() = role == "assistant" && metaString("kind") == "thought"
+
+private val AgentMessage.isCommand: Boolean
+    get() = role == "user" && metaString("kind") == "command"
+
+private val AgentMessage.toolSucceeded: Boolean
+    get() = metadata?.get("ok")?.jsonPrimitive?.booleanOrNull ?: true
+
+private val AgentMessage.thoughtDurationMs: Long
+    get() = metadata?.get("durationMs")?.jsonPrimitive?.longOrNull ?: 0L
+
+/* ======================================================================= */
+/* Model reasoning — collapsible "Thought for N seconds" (LMArena style)    */
+/* ======================================================================= */
+
+@Composable
+private fun ThoughtRow(message: AgentMessage) {
+    var expanded by remember(message.id) { mutableStateOf(false) }
+    val seconds = message.thoughtDurationMs.let { if (it > 0) (it / 1000L).coerceAtLeast(1L) else 0L }
+    val label = if (seconds > 0) "Thought for $seconds second${if (seconds == 1L) "" else "s"}" else "Thought for a moment"
+    Column(Modifier.fillMaxWidth()) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .clickable { expanded = !expanded }
+                .padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                Icons.Rounded.Psychology, null,
+                modifier = Modifier.size(14.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                label,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f)
+            )
+            Icon(
+                if (expanded) Icons.Rounded.KeyboardArrowDown else Icons.Rounded.KeyboardArrowRight,
+                if (expanded) "Hide reasoning" else "Show reasoning",
+                modifier = Modifier.size(14.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        if (expanded) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(start = 20.dp, top = 2.dp, bottom = 4.dp)
+                    .alpha(0.78f)
+            ) {
+                MarkdownContent(message.content, textSize = MaterialTheme.typography.bodySmall.fontSize)
+            }
+        }
+    }
+}
+
+/* ======================================================================= */
+/* Slash-command echo rows (/compact)                                       */
+/* ======================================================================= */
+
+@Composable
+private fun CommandRow(message: AgentMessage) {
+    val note = if (message.metaString("command") == "compact")
+        " — context compaction will run at the start of the next iteration" else ""
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            Icons.Rounded.Terminal, null,
+            modifier = Modifier.size(12.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            message.content + note,
+            style = MaterialTheme.typography.labelSmall,
+            fontFamily = FontFamily.Monospace,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+/* ======================================================================= */
+/* Live plan / todo checklist                                               */
+/* ======================================================================= */
+
+@Composable
+private fun AgentPlanCard(todos: List<AgentTodo>) {
+    var expanded by remember { mutableStateOf(true) }
+    val done = todos.count { it.status == "completed" }
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        shape = MaterialTheme.shapes.medium,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable { expanded = !expanded }
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    Icons.Rounded.Checklist, null,
+                    modifier = Modifier.size(15.dp),
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "Plan",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f)
+                )
+                Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = CircleShape) {
+                    Text(
+                        "$done/${todos.size}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                    )
+                }
+                Spacer(Modifier.width(6.dp))
+                Icon(
+                    if (expanded) Icons.Rounded.KeyboardArrowDown else Icons.Rounded.KeyboardArrowRight,
+                    if (expanded) "Collapse plan" else "Expand plan",
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (expanded) {
+                Column(Modifier.padding(start = 12.dp, end = 12.dp, bottom = 10.dp)) {
+                    todos.forEach { todo ->
+                        val completed = todo.status == "completed"
+                        val inProgress = todo.status == "in_progress"
+                        Row(
+                            Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                when {
+                                    completed -> Icons.Rounded.CheckCircle
+                                    inProgress -> Icons.Rounded.PlayCircle
+                                    else -> Icons.Rounded.RadioButtonUnchecked
+                                },
+                                null,
+                                modifier = Modifier.size(14.dp),
+                                tint = when {
+                                    completed -> MaterialTheme.colorScheme.tertiary
+                                    inProgress -> MaterialTheme.colorScheme.primary
+                                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                }
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                todo.content,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (completed) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                                textDecoration = if (completed) TextDecoration.LineThrough else TextDecoration.None,
+                                modifier = if (completed) Modifier.alpha(0.8f) else Modifier
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 /* ======================================================================= */
@@ -524,58 +737,74 @@ private fun ToolCallRow(message: AgentMessage) {
     var expanded by remember(message.id) { mutableStateOf(false) }
     val verb = toolVerb(message)
     val target = toolTarget(message)
-    Surface(
-        color = MaterialTheme.colorScheme.surfaceContainer,
-        shape = MaterialTheme.shapes.small,
-        modifier = Modifier.fillMaxWidth().clickable(enabled = message.content.isNotBlank()) { expanded = !expanded }
-    ) {
-        Column(Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Surface(
-                    color = MaterialTheme.colorScheme.secondaryContainer,
-                    shape = CircleShape,
-                    modifier = Modifier.size(20.dp)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(verb.icon, null, Modifier.size(12.dp), tint = MaterialTheme.colorScheme.onSecondaryContainer)
-                    }
-                }
-                Spacer(Modifier.width(8.dp))
+    val ok = message.toolSucceeded
+    val tint = if (ok) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error
+    Column(Modifier.fillMaxWidth()) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(6.dp))
+                .clickable(enabled = message.content.isNotBlank()) { expanded = !expanded }
+                .padding(vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                verb.icon, null,
+                modifier = Modifier.size(13.dp),
+                tint = if (ok) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+            )
+            Spacer(Modifier.width(7.dp))
+            Text(
+                verb.label,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = if (ok) MaterialTheme.colorScheme.onSurface else tint
+            )
+            if (target.isNotBlank()) {
+                Spacer(Modifier.width(6.dp))
                 Text(
-                    verb.label,
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.SemiBold
+                    target,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
                 )
-                if (target.isNotBlank()) {
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        target,
-                        style = MaterialTheme.typography.labelSmall,
-                        fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-                if (message.content.isNotBlank()) {
-                    Text(
-                        if (expanded) "▾" else "▸",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+            } else {
+                Spacer(Modifier.weight(1f))
             }
-            if (expanded && message.content.isNotBlank()) {
-                Spacer(Modifier.height(6.dp))
-                HorizontalDivider()
-                Spacer(Modifier.height(6.dp))
+            if (!ok) {
+                Text(
+                    "Failed",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.error
+                )
+                Spacer(Modifier.width(4.dp))
+            }
+            if (message.content.isNotBlank()) {
+                Icon(
+                    imageVector = if (expanded) Icons.Rounded.KeyboardArrowDown else Icons.Rounded.KeyboardArrowRight,
+                    contentDescription = if (expanded) "Collapse" else "Expand",
+                    modifier = Modifier.size(14.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        if (expanded && message.content.isNotBlank()) {
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceContainer,
+                shape = MaterialTheme.shapes.small,
+                modifier = Modifier.fillMaxWidth().padding(start = 20.dp, top = 2.dp, bottom = 4.dp)
+            ) {
                 SelectionContainer {
                     Text(
                         message.content,
                         style = MaterialTheme.typography.bodySmall,
                         fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(8.dp)
                     )
                 }
             }
@@ -631,17 +860,10 @@ private fun ChangesTab(session: AgentSession) {
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
                     shape = MaterialTheme.shapes.medium,
-                    color = MaterialTheme.colorScheme.surfaceVariant
+                    color = MaterialTheme.colorScheme.surfaceContainer
                 ) {
-                    SelectionContainer {
-                        Column(Modifier.padding(12.dp).horizontalScroll(rememberScrollState())) {
-                            Text(
-                                session.diff,
-                                fontFamily = FontFamily.Monospace,
-                                style = MaterialTheme.typography.bodySmall,
-                                softWrap = false
-                            )
-                        }
+                    Column(Modifier.padding(vertical = 8.dp)) {
+                        DiffView(session.diff)
                     }
                 }
             }

@@ -1,6 +1,7 @@
 package com.zeus.code.data
 
 import com.zeus.code.model.AccessTokenResponse
+import com.zeus.code.model.ArtifactsResponse
 import com.zeus.code.model.Branch
 import com.zeus.code.model.DeviceCodeResponse
 import com.zeus.code.model.GitHubError
@@ -9,6 +10,8 @@ import com.zeus.code.model.Issue
 import com.zeus.code.model.MergeResult
 import com.zeus.code.model.PullRequest
 import com.zeus.code.model.Repository
+import com.zeus.code.model.RunJobsResponse
+import com.zeus.code.model.WorkflowRunsResponse
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -20,6 +23,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.OutputStream
 import java.util.concurrent.TimeUnit
 
 class GitHubApiException(val statusCode: Int, override val message: String) : RuntimeException(message)
@@ -168,6 +172,44 @@ class GitHubApi(
             "/repos/$owner/$repo/pulls/$number/reviews",
             buildJsonObject { put("body", body); put("event", event) }.toString()
         ) { Unit }
+    }
+
+    /* ----------------------------------------------------------------- */
+    /* Actions — workflow runs, jobs and downloadable artifacts          */
+    /* ----------------------------------------------------------------- */
+
+    suspend fun workflowRuns(
+        token: String,
+        owner: String,
+        repo: String,
+        perPage: Int = 20
+    ) = get<WorkflowRunsResponse>(token, "/repos/$owner/$repo/actions/runs?per_page=$perPage").workflowRuns
+
+    suspend fun runJobs(token: String, owner: String, repo: String, runId: Long) =
+        get<RunJobsResponse>(token, "/repos/$owner/$repo/actions/runs/$runId/jobs?per_page=50").jobs
+
+    suspend fun runArtifacts(token: String, owner: String, repo: String, runId: Long) =
+        get<ArtifactsResponse>(token, "/repos/$owner/$repo/actions/runs/$runId/artifacts?per_page=50").artifacts
+
+    /** Streams an artifact ZIP to [output]. GitHub redirects to a signed URL; OkHttp follows. */
+    suspend fun downloadArchive(token: String, downloadUrl: String, output: OutputStream) = withContext(Dispatchers.IO) {
+        val request = Request.Builder()
+            .url(downloadUrl)
+            .header("Accept", "application/vnd.github+json")
+            .header("Authorization", "Bearer $token")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .header("User-Agent", "Zeus-Android")
+            .get()
+            .build()
+        try {
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) throw GitHubApiException(response.code, "Download failed (${response.code})")
+                val body = response.body ?: throw GitHubApiException(502, "Empty download response")
+                body.byteStream().use { it.copyTo(output) }
+            }
+        } finally {
+            output.close()
+        }
     }
 
     private suspend inline fun <reified T> paged(token: String, path: String): List<T> {

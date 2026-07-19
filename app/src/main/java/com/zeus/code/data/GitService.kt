@@ -166,6 +166,32 @@ class GitService {
         }
     }
 
+    /** Unified diff of [commit] against its first parent (empty tree for the initial commit). */
+    suspend fun commitDiff(directory: File, commit: String): String = withGit(directory) { git ->
+        val repository = git.repository
+        val target = repository.resolve(commit) ?: error("Commit '$commit' not found")
+        val revCommit = repository.parseCommit(target)
+        val output = java.io.ByteArrayOutputStream()
+        repository.newObjectReader().use { reader ->
+            org.eclipse.jgit.diff.DiffFormatter(output).use { formatter ->
+                formatter.setRepository(repository)
+                val newTree = org.eclipse.jgit.treewalk.CanonicalTreeParser().apply {
+                    reset(reader, revCommit.tree.id)
+                }
+                if (revCommit.parentCount > 0) {
+                    val parent = repository.parseCommit(revCommit.getParent(0))
+                    val oldTree = org.eclipse.jgit.treewalk.CanonicalTreeParser().apply {
+                        reset(reader, parent.tree.id)
+                    }
+                    formatter.format(oldTree, newTree)
+                } else {
+                    formatter.format(org.eclipse.jgit.treewalk.EmptyTreeIterator(), newTree)
+                }
+            }
+        }
+        output.toString(Charsets.UTF_8.name())
+    }
+
     suspend fun setRemote(directory: File, url: String) = withGit(directory) { git ->
         val config = git.repository.config
         config.setString("remote", "origin", "url", normalizeRemote(url))
@@ -384,7 +410,7 @@ class GitService {
             current = current.cause
             depth++
         }
-        return "Cause › ${chain.joinToString(" ← ").ifBlank { "unknown" }}"
+        return "Cause > ${chain.joinToString(" < ").ifBlank { "unknown" }}"
     }
 
     private fun friendlyGitError(error: Throwable): String {
