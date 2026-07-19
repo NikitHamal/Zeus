@@ -59,7 +59,9 @@ object UpdateChecker {
             .build()
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) error("GitHub returned ${response.code}.")
-            return json.decodeFromString(ReleaseDto.serializer(), response.body.string())
+            val raw = response.body?.string().orEmpty()
+            if (raw.isBlank()) error("Empty response from GitHub.")
+            return json.decodeFromString(ReleaseDto.serializer(), raw)
         }
     }
 
@@ -98,7 +100,7 @@ object UpdateChecker {
             .build()
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) error("Download failed (${response.code}).")
-            val body = response.body
+            val body = response.body ?: error("Empty download response.")
             val total = body.contentLength().let { if (it > 0) it else update.sizeBytes }
             target.parentFile?.mkdirs()
             body.byteStream().use { input ->
