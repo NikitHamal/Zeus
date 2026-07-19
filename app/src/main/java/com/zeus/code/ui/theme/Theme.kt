@@ -14,10 +14,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.googlefonts.Font
-import androidx.compose.ui.text.googlefonts.GoogleFont
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
@@ -135,25 +134,15 @@ private val ZeusShapes = Shapes(
 /* Typography — compact M3 ramp, Poppins everywhere per design decision.     */
 /* UI copy avoids characters Poppins lacks (arrows, checkmarks, box glyphs)  */
 /* so nothing renders as tofu.                                               */
+/* Bundled TTFs (res/font) so chat markdown (native TextView) and every      */
+/* Compose text use the exact same Poppins, offline, no provider dependency. */
 /* ------------------------------------------------------------------------- */
 
-private val provider = GoogleFont.Provider(
-    providerAuthority = "com.google.android.gms.fonts",
-    providerPackage = "com.google.android.gms",
-    certificates = R.array.com_google_android_gms_fonts_certs
-)
-
-private fun poppins(weight: FontWeight) = Font(
-    googleFont = GoogleFont("Poppins"),
-    fontProvider = provider,
-    weight = weight
-)
-
 private val Poppins = FontFamily(
-    poppins(FontWeight.Normal),
-    poppins(FontWeight.Medium),
-    poppins(FontWeight.SemiBold),
-    poppins(FontWeight.Bold)
+    Font(R.font.poppins_regular, FontWeight.Normal),
+    Font(R.font.poppins_medium, FontWeight.Medium),
+    Font(R.font.poppins_semibold, FontWeight.SemiBold),
+    Font(R.font.poppins_bold, FontWeight.Bold)
 )
 
 private val ZeusTypography = Typography(

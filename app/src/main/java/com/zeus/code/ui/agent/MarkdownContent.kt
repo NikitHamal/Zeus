@@ -13,13 +13,15 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.res.ResourcesCompat
+import com.zeus.code.R
 import io.noties.markwon.Markwon
 import io.noties.markwon.linkify.LinkifyPlugin
 
 /**
  * Renders markdown (fenced code blocks, inline code, bold/italic, lists,
- * headings, links) in a native TextView via Markwon. Uses the platform font
- * so glyphs missing from Poppins (arrows, box chars, emoji) render fine.
+ * headings, links) in a native TextView via Markwon, set in the same bundled
+ * Poppins family the rest of the app uses (bold spans synthesize from it).
  */
 @Composable
 internal fun MarkdownContent(
@@ -42,10 +44,12 @@ internal fun MarkdownContent(
             .usePlugin(LinkifyPlugin.create())
             .build()
     }
+    val poppins = remember { runCatching { ResourcesCompat.getFont(context, R.font.poppins_regular) }.getOrNull() }
 
     AndroidView(
         factory = {
             TextView(it).apply {
+                if (poppins != null) typeface = poppins
                 setTextColor(resolvedColor)
                 setLinkTextColor(resolvedLink)
                 movementMethod = LinkMovementMethod.getInstance()

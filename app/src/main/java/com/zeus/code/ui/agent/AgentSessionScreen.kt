@@ -30,6 +30,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Send
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Archive
 import androidx.compose.material.icons.rounded.AttachFile
 import androidx.compose.material.icons.rounded.AutoAwesome
@@ -227,6 +228,7 @@ internal fun AgentSessionScreen(
                     visible = session.status !in listOf("completed", "failed", "cancelled")
                 ) { viewModel.control("stop") }
             }
+            ContextMeter(session)
             Spacer(Modifier.height(6.dp))
             Row(
                 Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
@@ -256,6 +258,57 @@ internal fun AgentSessionScreen(
         onDismiss = { confirmDelete = false },
         onConfirm = { confirmDelete = false; viewModel.delete(session) }
     )
+}
+
+/** Live context-window usage, mirroring the NEBians session page meter. */
+@Composable
+private fun ContextMeter(session: AgentSession) {
+    val ctx = session.context
+    if (ctx.windowTokens <= 0) return
+    val percent = ctx.percent.coerceIn(0, 100)
+    val color = when {
+        percent >= 80 -> MaterialTheme.colorScheme.error
+        percent >= 65 -> MaterialTheme.colorScheme.tertiary
+        else -> MaterialTheme.colorScheme.primary
+    }
+    Row(
+        Modifier.fillMaxWidth().padding(top = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            "Context",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.width(8.dp))
+        LinearProgressIndicator(
+            progress = { percent / 100f },
+            modifier = Modifier.weight(1f).height(3.dp).clip(CircleShape),
+            color = color,
+            trackColor = MaterialTheme.colorScheme.surfaceVariant,
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            "$percent%",
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = color
+        )
+        Text(
+            " · ${formatTokenCount(ctx.estimatedTokens)}/${formatTokenCount(ctx.windowTokens)}" +
+                if (ctx.compactions > 0) " · ${ctx.compactions} compacted" else "",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+private fun formatTokenCount(value: Int): String = when {
+    value >= 1_000_000 -> "${(value / 100_000) / 10f}M"
+    value >= 1_000 -> "${value / 1000}k"
+    else -> value.toString()
 }
 
 @Composable
@@ -375,7 +428,7 @@ private fun ActivityTab(session: AgentSession, state: AgentUiState, viewModel: B
                     IconButton(
                         onClick = { filePicker.launch(arrayOf("*/*")) },
                         modifier = Modifier.size(38.dp)
-                    ) { Icon(Icons.Rounded.AttachFile, "Attach files", tint = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    ) { Icon(Icons.Rounded.Add, "Attach files", tint = MaterialTheme.colorScheme.onSurfaceVariant) }
                     OutlinedTextField(
                         value = guidance,
                         onValueChange = { guidance = it },
