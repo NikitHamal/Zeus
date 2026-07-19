@@ -50,7 +50,9 @@ data class AgentUiState(
     val selectedSession: AgentSession? = null,
     val archivedMode: Boolean = false,
     val worker: AgentWorker = AgentWorker(),
-    val modelReady: Boolean = false
+    val modelReady: Boolean = false,
+    /** Sessions with server-side activity the user has not viewed yet. */
+    val unreadIds: Set<String> = emptySet()
 ) {
     val filteredRepositories: List<AgentRepository>
         get() = repositories.filter {
@@ -62,6 +64,7 @@ data class AgentUiState(
 class BackgroundAgentViewModel(application: Application) : AndroidViewModel(application) {
     private val api = BackgroundAgentApi()
     private val store = SecureTokenStore(application, "background_agent")
+    private val seenPrefs = application.getSharedPreferences("zeus_agent_seen", android.content.Context.MODE_PRIVATE)
     private val _state = MutableStateFlow(AgentUiState())
     val state: StateFlow<AgentUiState> = _state.asStateFlow()
     private var token: String? = null
@@ -161,10 +164,27 @@ class BackgroundAgentViewModel(application: Application) : AndroidViewModel(appl
     }
 
     fun openSession(session: AgentSession) = task(null) {
-        _state.update { it.copy(selectedSession = api.session(requireToken(), session.id).session) }
+        val fresh = api.session(requireToken(), session.id).session
+        _state.update { it.copy(selectedSession = fresh) }
+        markSeen(fresh)
     }
 
     fun closeSession() = _state.update { it.copy(selectedSession = null) }
+
+    /** Record that the user has seen this session at its current update stamp. */
+    fun markSeen(session: AgentSession) {
+        seenPrefs.edit().putLong(session.id, session.updatedAt).apply()
+        recomputeUnread()
+    }
+
+    private fun lastSeen(id: String): Long = seenPrefs.getLong(id, 0L)
+
+    private fun computeUnread(sessions: List<AgentSession>): Set<String> =
+        sessions.filter { it.updatedAt > lastSeen(it.id) }.mapTo(linkedSetOf()) { it.id }
+
+    private fun recomputeUnread() {
+        _state.update { it.copy(unreadIds = computeUnread(it.sessions)) }
+    }
 
     fun sendMessage(content: String, uploads: List<AgentUpload>, onSent: (() -> Unit)? = null) = task("Sending guidance…") {
         val session = requireSession()
@@ -304,7 +324,8 @@ class BackgroundAgentViewModel(application: Application) : AndroidViewModel(appl
                 worker = response.worker,
                 modelReady = response.model.configured,
                 selectedProject = state.selectedProject?.let { selected -> response.projects.firstOrNull { it.id == selected.id } ?: selected },
-                selectedSession = if (keepSelected) state.selectedSession else null
+                selectedSession = if (keepSelected) state.selectedSession else null,
+                unreadIds = computeUnread(response.sessions)
             )
         }
         if (keepSelected && selectedId != null) reloadSelected()
@@ -313,7 +334,9 @@ class BackgroundAgentViewModel(application: Application) : AndroidViewModel(appl
     private suspend fun reloadSelected() {
         val selected = _state.value.selectedSession ?: return
         val updated = api.session(requireToken(), selected.id).session
-        _state.update { it.copy(selectedSession = updated) }
+        _state.update { st -> st.copy(selectedSession = updated, unreadIds = st.unreadIds - updated.id) }
+        // A session the user is looking at is always considered read.
+        seenPrefs.edit().putLong(updated.id, updated.updatedAt).apply()
     }
 
     private fun requireToken(): String = token ?: error("Connect Zeus to NEBians first.")

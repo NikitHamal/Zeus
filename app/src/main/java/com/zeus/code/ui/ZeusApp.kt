@@ -7,6 +7,7 @@ import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -54,6 +55,7 @@ import androidx.compose.material.icons.rounded.ForkRight
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.KeyboardArrowRight
+import androidx.compose.material.icons.rounded.LinkOff
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.OpenInBrowser
@@ -131,17 +133,20 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.zeus.code.BuildConfig
+import com.zeus.code.model.AgentSession
 import com.zeus.code.model.FileEntry
 import com.zeus.code.model.MainTab
 import com.zeus.code.model.PullRequest
 import com.zeus.code.model.Repository
 import com.zeus.code.model.Workspace
+import com.zeus.code.ui.agent.AgentUiState
 import com.zeus.code.ui.agent.BackgroundAgentScreen
 import com.zeus.code.ui.agent.BackgroundAgentViewModel
 import com.zeus.code.ui.theme.ZeusGold
 import com.zeus.code.ui.theme.ZeusTheme
 import com.zeus.code.ui.theme.ZeusThemeMode
 import java.text.DateFormat
+import java.util.Calendar
 import java.util.Date
 
 @Composable
@@ -341,7 +346,8 @@ private fun MainShell(state: ZeusState, viewModel: MainViewModel, agentViewModel
 
     Scaffold(
         topBar = {
-            if (route !is WorkspaceRoute.Editor) {
+            // Settings is a standalone full-screen surface with its own header.
+            if (route !is WorkspaceRoute.Editor && !settingsOpen) {
                 Column {
                     CenterAlignedTopAppBar(
                         title = {
@@ -391,14 +397,14 @@ private fun MainShell(state: ZeusState, viewModel: MainViewModel, agentViewModel
             }
         },
         bottomBar = {
-            if (route !is WorkspaceRoute.Editor) {
+            if (route !is WorkspaceRoute.Editor && !settingsOpen) {
                 NavigationBar {
                     MainTab.entries.forEach { item ->
+                        // Badge semantics: only the Agent tab notifies, and only for
+                        // sessions with activity the user has not viewed yet.
                         val count = when (item) {
-                            MainTab.AGENT -> agentState.sessions.size
-                            MainTab.GITHUB -> state.repositories.size
-                            MainTab.WORKSPACES -> state.workspaces.size
-                            MainTab.HOME -> 0
+                            MainTab.AGENT -> agentState.unreadIds.size
+                            else -> 0
                         }
                         NavigationBarItem(
                             selected = tab == item,
@@ -422,21 +428,47 @@ private fun MainShell(state: ZeusState, viewModel: MainViewModel, agentViewModel
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
             when {
-                settingsOpen -> SettingsScreen(state, viewModel)
+                settingsOpen -> SettingsScreen(
+                    state = state,
+                    viewModel = viewModel,
+                    agentState = agentState,
+                    agentViewModel = agentViewModel,
+                    onBack = { settingsOpen = false },
+                    onOpenAgent = {
+                        settingsOpen = false
+                        selectedTab = MainTab.AGENT.name
+                    }
+                )
                 else -> when (tab) {
                     MainTab.HOME -> HomeScreen(
                         state = state,
-                        onNavigate = { selectedTab = it.name },
+                        agentState = agentState,
+                        onOpenWorkspace = { workspace ->
+                            viewModel.selectWorkspace(workspace)
+                            selectedTab = MainTab.WORKSPACES.name
+                        },
+                        onOpenSession = { session ->
+                            agentViewModel.openSession(session)
+                            selectedTab = MainTab.AGENT.name
+                        },
                         onOpenTerminal = { workspace ->
                             viewModel.selectWorkspace(workspace)
                             selectedTab = MainTab.WORKSPACES.name
                             navWorkspace(WorkspaceRoute.Terminal)
                         }
                     )
-                    MainTab.AGENT -> BackgroundAgentScreen(agentViewModel) { url, name, branch ->
-                        viewModel.cloneUrl(url, name, branch)
-                        selectedTab = MainTab.WORKSPACES.name
-                    }
+                    MainTab.AGENT -> BackgroundAgentScreen(
+                        viewModel = agentViewModel,
+                        workspaces = state.workspaces,
+                        onOpenWorkspace = { workspace ->
+                            viewModel.selectWorkspace(workspace)
+                            selectedTab = MainTab.WORKSPACES.name
+                        },
+                        onCloneBranch = { url, name, branch ->
+                            viewModel.cloneUrl(url, name, branch)
+                            selectedTab = MainTab.WORKSPACES.name
+                        }
+                    )
                     MainTab.WORKSPACES -> when (route) {
                         is WorkspaceRoute.List -> WorkspaceListScreen(
                             state = state,
@@ -474,65 +506,161 @@ private fun MainShell(state: ZeusState, viewModel: MainViewModel, agentViewModel
 @Composable
 private fun HomeScreen(
     state: ZeusState,
-    onNavigate: (MainTab) -> Unit,
+    agentState: AgentUiState,
+    onOpenWorkspace: (Workspace) -> Unit,
+    onOpenSession: (AgentSession) -> Unit,
     onOpenTerminal: (Workspace) -> Unit
 ) {
+    val activeTasks = agentState.sessions.count { it.status in listOf("queued", "preparing", "running") }
+    val recentTasks = if (agentState.authorized) agentState.sessions.take(3) else emptyList()
+
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(20.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+        contentPadding = PaddingValues(horizontal = 18.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
-            Text("Build anywhere.", style = MaterialTheme.typography.headlineLarge)
-            Text(
-                state.user?.let { "Welcome back, ${it.name ?: it.login}." } ?: "Your local coding cockpit is ready.",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                StatCard("Repositories", state.repositories.size, Icons.Rounded.Source, Modifier.weight(1f))
-                StatCard("Workspaces", state.workspaces.size, Icons.Rounded.Folder, Modifier.weight(1f))
+            Column {
+                Text(
+                    greetingForNow(),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    state.user?.name ?: state.user?.login ?: "coder",
+                    style = MaterialTheme.typography.headlineMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         }
-        item { SectionTitle("Quick actions") }
         item {
-            QuickAction(Icons.Rounded.AutoAwesome, "Run a background task", "Send production work to the NEBians coding agent") {
-                onNavigate(MainTab.AGENT)
-            }
-            QuickAction(Icons.Rounded.FolderOpen, "Open local workspaces", "Edit, commit, pull and push from your phone") {
-                onNavigate(MainTab.WORKSPACES)
-            }
-            QuickAction(Icons.Rounded.Source, "Browse GitHub", "Clone repositories and manage pull requests") {
-                onNavigate(MainTab.GITHUB)
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                HomeStat("Repositories", state.repositories.size, Icons.Rounded.Source, Modifier.weight(1f))
+                HomeStat("Workspaces", state.workspaces.size, Icons.Rounded.Folder, Modifier.weight(1f))
+                HomeStat("Active tasks", activeTasks, Icons.Rounded.AutoAwesome, Modifier.weight(1f))
             }
         }
         state.selectedWorkspace?.let { workspace ->
             item {
                 SectionTitle("Active workspace")
-                TonalCard(onClick = { onNavigate(MainTab.WORKSPACES) }) {
+                TonalCard(onClick = { onOpenWorkspace(workspace) }) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         IconTile(if (workspace.gitRepository) Icons.Rounded.Source else Icons.Rounded.Folder)
-                        Spacer(Modifier.width(14.dp))
+                        Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
-                            Text(workspace.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(workspace.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text(
                                 workspace.currentBranch?.let { "Branch: $it" } ?: "Local folder",
-                                style = MaterialTheme.typography.bodyMedium,
+                                style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
                         IconButton(onClick = { onOpenTerminal(workspace) }) {
-                            Icon(Icons.Rounded.Terminal, "Open terminal")
+                            Icon(Icons.Rounded.Terminal, "Open terminal", Modifier.size(20.dp))
                         }
                     }
                 }
             }
         }
+        if (recentTasks.isNotEmpty()) {
+            item { SectionTitle("Recent tasks") }
+            items(recentTasks, key = { "home-${it.id}" }) { session ->
+                TaskPeekRow(
+                    session = session,
+                    unread = session.id in agentState.unreadIds,
+                    onClick = { onOpenSession(session) }
+                )
+            }
+        }
     }
+}
+
+@Composable
+private fun HomeStat(label: String, value: Int, icon: ImageVector, modifier: Modifier = Modifier) {
+    ElevatedCard(
+        modifier,
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
+    ) {
+        Row(
+            Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(value.toString(), style = MaterialTheme.typography.titleLarge)
+                Text(
+                    label,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Icon(icon, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+        }
+    }
+}
+
+@Composable
+private fun TaskPeekRow(session: AgentSession, unread: Boolean, onClick: () -> Unit) {
+    TonalCard(onClick = onClick) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            StatusDot(session.status)
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        session.title,
+                        Modifier.weight(1f, fill = false),
+                        style = MaterialTheme.typography.titleSmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (unread) {
+                        Spacer(Modifier.width(6.dp))
+                        Box(
+                            Modifier.size(8.dp).clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primary)
+                        )
+                    }
+                }
+                Text(
+                    "${session.repoFullName} · ${session.progress}%",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            Text(
+                if (session.updatedAt > 0) DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(session.updatedAt)) else "",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun StatusDot(status: String) {
+    val color = when (status) {
+        "completed" -> MaterialTheme.colorScheme.tertiary
+        "failed", "cancelled" -> MaterialTheme.colorScheme.error
+        "queued", "preparing", "running" -> MaterialTheme.colorScheme.primary
+        else -> MaterialTheme.colorScheme.outline
+    }
+    Box(Modifier.size(10.dp).clip(CircleShape).background(color))
+}
+
+private fun greetingForNow(): String = when (Calendar.getInstance().get(Calendar.HOUR_OF_DAY)) {
+    in 5..11 -> "Good morning"
+    in 12..16 -> "Good afternoon"
+    in 17..20 -> "Good evening"
+    else -> "Good night"
 }
 
 /* ------------------------------------------------------------------------- */
@@ -1192,112 +1320,182 @@ private fun RepositoryDetailScreen(state: ZeusState, viewModel: MainViewModel, r
 /* ------------------------------------------------------------------------- */
 
 @Composable
-private fun SettingsScreen(state: ZeusState, viewModel: MainViewModel) {
+private fun SettingsScreen(
+    state: ZeusState,
+    viewModel: MainViewModel,
+    agentState: AgentUiState,
+    agentViewModel: BackgroundAgentViewModel,
+    onBack: () -> Unit,
+    onOpenAgent: () -> Unit
+) {
     val context = LocalContext.current
     var disconnectConfirm by remember { mutableStateOf(false) }
+    var agentDisconnectConfirm by remember { mutableStateOf(false) }
     val modes = listOf(ZeusThemeMode.LIGHT, ZeusThemeMode.DARK, ZeusThemeMode.SYSTEM)
 
-    LazyColumn(
-        contentPadding = PaddingValues(20.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
-        item { SectionTitle("Appearance") }
-        item {
-            TonalCard {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconTile(Icons.Rounded.Palette)
-                    Spacer(Modifier.width(14.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text("Theme", style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            "Pick a look for Zeus.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-                Spacer(Modifier.height(14.dp))
-                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                    modes.forEachIndexed { index, mode ->
-                        SegmentedButton(
-                            selected = state.themeMode == mode,
-                            onClick = { viewModel.setThemeMode(mode) },
-                            shape = SegmentedButtonDefaults.itemShape(index = index, count = modes.size)
-                        ) { Text(mode.label, maxLines = 1) }
-                    }
-                }
-            }
-        }
-
-        item { SectionTitle("GitHub account") }
-        item {
-            TonalCard {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Surface(
-                        Modifier.size(52.dp),
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.primaryContainer
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
+    Column(Modifier.fillMaxSize()) {
+        CenterAlignedTopAppBar(
+            title = { Text("Settings", style = MaterialTheme.typography.titleLarge, maxLines = 1) },
+            navigationIcon = {
+                IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back") }
+            },
+            colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+                containerColor = MaterialTheme.colorScheme.background
+            )
+        )
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(horizontal = 18.dp, vertical = 4.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            item { SectionTitle("Appearance") }
+            item {
+                TonalCard {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconTile(Icons.Rounded.Palette)
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Theme", style = MaterialTheme.typography.titleSmall)
                             Text(
-                                (state.user?.login ?: "Z").take(1).uppercase(),
-                                style = MaterialTheme.typography.headlineSmall,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                                "Pick a look for Zeus.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
-                    Spacer(Modifier.width(14.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            state.user?.name ?: state.user?.login ?: "Offline user",
-                            style = MaterialTheme.typography.titleMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            state.user?.bio ?: if (state.authenticated) "Connected to GitHub" else "Local mode — GitHub features are offline",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                    Spacer(Modifier.height(12.dp))
+                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                        modes.forEachIndexed { index, mode ->
+                            SegmentedButton(
+                                selected = state.themeMode == mode,
+                                onClick = { viewModel.setThemeMode(mode) },
+                                shape = SegmentedButtonDefaults.itemShape(index = index, count = modes.size)
+                            ) { Text(mode.label, maxLines = 1) }
+                        }
                     }
                 }
-                Spacer(Modifier.height(14.dp))
-                OutlinedButton(
-                    onClick = {
-                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/settings/connections/applications"))
-                        context.startActivity(intent)
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(Icons.Rounded.OpenInBrowser, null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Manage GitHub authorization")
-                }
-                Spacer(Modifier.height(10.dp))
-                OutlinedButton(
-                    onClick = { if (state.authenticated) disconnectConfirm = true else viewModel.logout() },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(Icons.AutoMirrored.Rounded.Logout, null)
-                    Spacer(Modifier.width(8.dp))
-                    Text(if (state.authenticated) "Disconnect GitHub" else "Exit offline mode")
+            }
+
+            item { SectionTitle("GitHub account") }
+            item {
+                TonalCard {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Surface(
+                            Modifier.size(44.dp),
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primaryContainer
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(
+                                    (state.user?.login ?: "Z").take(1).uppercase(),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            }
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                state.user?.name ?: state.user?.login ?: "Offline user",
+                                style = MaterialTheme.typography.titleSmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Spacer(Modifier.height(3.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    Modifier.size(7.dp).clip(CircleShape).background(
+                                        if (state.authenticated) MaterialTheme.colorScheme.tertiary
+                                        else MaterialTheme.colorScheme.outline
+                                    )
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    if (state.authenticated) "Connected to GitHub" else "Local mode — GitHub is offline",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedButton(
+                        onClick = {
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/settings/connections/applications"))
+                            context.startActivity(intent)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Rounded.OpenInBrowser, null, Modifier.size(17.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Manage GitHub authorization", maxLines = 1)
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedButton(
+                        onClick = { if (state.authenticated) disconnectConfirm = true else viewModel.logout() },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                    ) {
+                        Icon(Icons.AutoMirrored.Rounded.Logout, null, Modifier.size(17.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(if (state.authenticated) "Disconnect GitHub" else "Exit offline mode", maxLines = 1)
+                    }
                 }
             }
-        }
 
-        item { SectionTitle("About") }
-        item {
-            SettingRow(Icons.Rounded.Bolt, "Zeus version", "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
-        }
-        item {
-            SettingRow(Icons.Rounded.Folder, "Workspace storage", "Private app storage; exported copies omit .git")
-        }
-        item {
-            InfoCard(
-                icon = Icons.Rounded.Info,
-                title = "Tip: paste any GitHub URL",
-                body = "Clone accepts https://github.com/owner/repo, github.com/owner/repo and git@github.com:owner/repo URLs."
-            )
+            item { SectionTitle("Background agent") }
+            item {
+                TonalCard {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconTile(Icons.Rounded.AutoAwesome)
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("NEBians", style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                if (agentState.authorized) {
+                                    agentState.me?.user?.let { user ->
+                                        "Connected · ${user.displayName.ifBlank { user.username }.ifBlank { "device" }}"
+                                    } ?: "Connected"
+                                } else "Not connected",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        if (agentState.authorized) {
+                            IconButton(onClick = { agentDisconnectConfirm = true }, modifier = Modifier.size(36.dp)) {
+                                Icon(
+                                    Icons.Rounded.LinkOff,
+                                    "Disconnect NEBians",
+                                    Modifier.size(20.dp),
+                                    tint = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
+                    }
+                    if (!agentState.authorized) {
+                        Spacer(Modifier.height(10.dp))
+                        OutlinedButton(onClick = onOpenAgent, modifier = Modifier.fillMaxWidth()) {
+                            Icon(Icons.Rounded.AutoAwesome, null, Modifier.size(17.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Connect from the Agent tab", maxLines = 1)
+                        }
+                    }
+                }
+            }
+
+            item { SectionTitle("About") }
+            item { AppUpdateCard() }
+            item {
+                SettingRow(Icons.Rounded.Bolt, "Zeus version", "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
+            }
+            item {
+                SettingRow(Icons.Rounded.Folder, "Workspace storage", "Private app storage; exported copies omit .git")
+            }
+            item { Spacer(Modifier.height(22.dp)) }
         }
     }
     if (disconnectConfirm) ConfirmDialog(
@@ -1308,6 +1506,15 @@ private fun SettingsScreen(state: ZeusState, viewModel: MainViewModel) {
     ) {
         disconnectConfirm = false
         viewModel.logout()
+    }
+    if (agentDisconnectConfirm) ConfirmDialog(
+        title = "Disconnect NEBians?",
+        body = "This revokes the saved background-agent device token. Your tasks remain on NEBians.",
+        destructive = true,
+        onDismiss = { agentDisconnectConfirm = false }
+    ) {
+        agentDisconnectConfirm = false
+        agentViewModel.disconnect()
     }
 }
 
@@ -1402,42 +1609,6 @@ private fun SectionTitle(text: String) {
         style = MaterialTheme.typography.titleMedium,
         modifier = Modifier.padding(top = 6.dp, bottom = 8.dp)
     )
-}
-
-@Composable
-private fun StatCard(label: String, value: Int, icon: ImageVector, modifier: Modifier = Modifier) {
-    ElevatedCard(
-        modifier,
-        shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
-    ) {
-        Column(Modifier.padding(18.dp)) {
-            Icon(icon, null, tint = MaterialTheme.colorScheme.primary)
-            Spacer(Modifier.height(16.dp))
-            Text(value.toString(), style = MaterialTheme.typography.headlineMedium)
-            Text(label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-    }
-}
-
-@Composable
-private fun QuickAction(icon: ImageVector, title: String, body: String, onClick: () -> Unit) {
-    TonalCard(onClick = onClick) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconTile(icon)
-            Spacer(Modifier.width(14.dp))
-            Column(Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.titleMedium)
-                Text(
-                    body,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            Icon(Icons.Rounded.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-    }
-    Spacer(Modifier.height(10.dp))
 }
 
 @Composable

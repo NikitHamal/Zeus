@@ -12,6 +12,21 @@ val localProperties = Properties().apply {
     if (file.exists()) file.inputStream().use(::load)
 }
 
+// Commit this APK is built from — used by Settings → Check for updates to
+// compare against CI release tags (build-<sha8>-<run>).
+fun resolveGitSha(): String {
+    val fromEnv = System.getenv("GITHUB_SHA").orEmpty().trim()
+    if (fromEnv.isNotEmpty()) return fromEnv
+    return runCatching {
+        ProcessBuilder("git", "rev-parse", "--short=8", "HEAD")
+            .directory(rootProject.projectDir)
+            .redirectErrorStream(true)
+            .start()
+            .inputStream.bufferedReader().readText().trim()
+            .ifBlank { "unknown" }
+    }.getOrDefault("unknown")
+}
+
 val oauthClientId = providers.gradleProperty("OAUTH_CLIENT_ID")
     .orElse(providers.environmentVariable("OAUTH_CLIENT_ID"))
     .orElse(localProperties.getProperty("OAUTH_CLIENT_ID", ""))
@@ -30,12 +45,13 @@ android {
         applicationId = "com.zeus.code"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "1.1.1"
+        versionCode = 4
+        versionName = "1.2.0"
 
         buildConfigField("String", "OAUTH_CLIENT_ID", "\"${oauthClientId.replace("\"", "\\\"")}\"")
         buildConfigField("String", "OAUTH_CALLBACK", "\"zeus://oauth\"")
         buildConfigField("String", "BACKGROUND_AGENT_BASE_URL", "\"${backgroundAgentBaseUrl.trimEnd('/').replace("\"", "\\\"")}\"")
+        buildConfigField("String", "GIT_SHA", "\"${resolveGitSha()}\"")
     }
 
     signingConfigs {
@@ -119,6 +135,10 @@ dependencies {
     implementation("com.googlecode.javaewah:JavaEWAH:1.2.3")
     implementation("commons-codec:commons-codec:1.17.0")
     runtimeOnly("org.slf4j:slf4j-nop:2.0.18")
+
+    // Markdown rendering for agent messages (code blocks, lists, headings, links)
+    implementation("io.noties.markwon:core:4.6.2")
+    implementation("io.noties.markwon:linkify:4.6.2")
 
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
     debugImplementation("androidx.compose.ui:ui-tooling")

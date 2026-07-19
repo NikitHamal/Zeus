@@ -4,6 +4,7 @@ package com.zeus.code.ui.agent
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -21,6 +22,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Archive
@@ -69,17 +71,26 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.zeus.code.model.AgentSession
 import com.zeus.code.model.AgentUpload
+import com.zeus.code.model.Workspace
 
 @Composable
 fun BackgroundAgentScreen(
     viewModel: BackgroundAgentViewModel,
+    workspaces: List<Workspace>,
+    onOpenWorkspace: (Workspace) -> Unit,
     onCloneBranch: (String, String, String?) -> Unit
 ) {
     val state by viewModel.state.collectAsState()
     when {
         state.booting -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
         !state.authorized -> AgentConnectScreen(state, viewModel)
-        state.selectedSession != null -> AgentSessionScreen(state, viewModel, onCloneBranch)
+        state.selectedSession != null -> AgentSessionScreen(
+            state = state,
+            viewModel = viewModel,
+            workspaces = workspaces,
+            onOpenWorkspace = onOpenWorkspace,
+            onCloneBranch = onCloneBranch
+        )
         else -> AgentDashboard(state, viewModel)
     }
 }
@@ -172,15 +183,16 @@ private fun AgentDashboard(state: AgentUiState, viewModel: BackgroundAgentViewMo
 
     LazyColumn(
         Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(18.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text("Background Agent", style = MaterialTheme.typography.headlineMedium)
+                    Text("Background Agent", style = MaterialTheme.typography.headlineSmall)
                     Text(
                         if (state.worker.healthy) "Worker online · Qwen 3.7 Plus" else "Worker unavailable",
+                        style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -201,10 +213,10 @@ private fun AgentDashboard(state: AgentUiState, viewModel: BackgroundAgentViewMo
         }
         item {
             ElevatedCard(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("New task", style = MaterialTheme.typography.titleLarge)
+                Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("New task", style = MaterialTheme.typography.titleMedium)
                     OutlinedButton(onClick = { projectPicker = true }, modifier = Modifier.fillMaxWidth()) {
-                        Icon(Icons.Rounded.Source, null)
+                        Icon(Icons.Rounded.Source, null, Modifier.size(17.dp))
                         Spacer(Modifier.width(8.dp))
                         Text(
                             state.selectedProject?.repoFullName ?: "Choose project",
@@ -217,8 +229,8 @@ private fun AgentDashboard(state: AgentUiState, viewModel: BackgroundAgentViewMo
                         onValueChange = { goal = it },
                         modifier = Modifier.fillMaxWidth(),
                         label = { Text("What should the agent change?") },
-                        minLines = 4,
-                        maxLines = 9
+                        minLines = 3,
+                        maxLines = 7
                     )
                     if (uploads.isNotEmpty()) {
                         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -251,7 +263,7 @@ private fun AgentDashboard(state: AgentUiState, viewModel: BackgroundAgentViewMo
         }
         item {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(if (state.archivedMode) "Archived tasks" else "Recent tasks", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                Text(if (state.archivedMode) "Archived tasks" else "Recent tasks", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
                 FilterChip(selected = !state.archivedMode, onClick = { viewModel.setArchivedMode(false) }, label = { Text("Recent") })
                 Spacer(Modifier.width(6.dp))
                 FilterChip(selected = state.archivedMode, onClick = { viewModel.setArchivedMode(true) }, label = { Text("Archived") })
@@ -269,7 +281,11 @@ private fun AgentDashboard(state: AgentUiState, viewModel: BackgroundAgentViewMo
             }
         } else {
             items(state.sessions, key = { it.id }) { session ->
-                AgentSessionCard(session, viewModel)
+                AgentSessionCard(
+                    session = session,
+                    unread = session.id in state.unreadIds,
+                    viewModel = viewModel
+                )
             }
         }
     }
@@ -292,15 +308,29 @@ private fun AgentDashboard(state: AgentUiState, viewModel: BackgroundAgentViewMo
 }
 
 @Composable
-private fun AgentSessionCard(session: AgentSession, viewModel: BackgroundAgentViewModel) {
+private fun AgentSessionCard(session: AgentSession, unread: Boolean, viewModel: BackgroundAgentViewModel) {
     var menu by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     OutlinedCard(Modifier.fillMaxWidth().clickable { viewModel.openSession(session) }) {
-        Column(Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(Modifier.padding(horizontal = 13.dp, vertical = 11.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
             Row(verticalAlignment = Alignment.Top) {
                 AgentStatus(session.status)
-                Spacer(Modifier.width(9.dp))
-                Text(session.title, Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    session.title,
+                    Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    fontWeight = FontWeight.SemiBold
+                )
+                if (unread) {
+                    Spacer(Modifier.width(6.dp))
+                    Box(
+                        Modifier.padding(top = 5.dp).size(8.dp)
+                            .background(MaterialTheme.colorScheme.primary, CircleShape)
+                    )
+                }
                 Box {
                     IconButton(onClick = { menu = true }, modifier = Modifier.size(36.dp)) { Icon(Icons.Rounded.MoreVert, "Task options") }
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
@@ -320,7 +350,13 @@ private fun AgentSessionCard(session: AgentSession, viewModel: BackgroundAgentVi
                     }
                 }
             }
-            Text(session.repoFullName, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                session.repoFullName,
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             LinearProgressIndicator(progress = { session.progress.coerceIn(0, 100) / 100f }, modifier = Modifier.fillMaxWidth())
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(session.progressLabel, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
