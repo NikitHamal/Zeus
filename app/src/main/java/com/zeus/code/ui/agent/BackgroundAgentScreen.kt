@@ -54,7 +54,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.material3.Text
@@ -62,6 +62,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -198,7 +199,7 @@ private fun AgentDashboard(state: AgentUiState, viewModel: BackgroundAgentViewMo
         if (uris.isNotEmpty()) viewModel.prepareUploads(uris) { uploads = it }
     }
     var refreshing by remember { mutableStateOf(false) }
-    var refreshCounter by remember { mutableIntStateOf(0) }
+    var refreshCounter by remember { mutableStateOf(0) }
 
     LaunchedEffect(refreshCounter) {
         if (refreshCounter > 0 && !state.busy) {
@@ -337,8 +338,6 @@ private fun AgentDashboard(state: AgentUiState, viewModel: BackgroundAgentViewMo
                 }
             }
         }
-    }
-    }
 
     if (projectPicker) AgentProjectPickerDialog(
         state = state,
