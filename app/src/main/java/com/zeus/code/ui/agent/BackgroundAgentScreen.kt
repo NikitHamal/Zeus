@@ -62,7 +62,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
+
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -338,6 +338,7 @@ private fun AgentDashboard(state: AgentUiState, viewModel: BackgroundAgentViewMo
                 }
             }
         }
+    }
 
     if (projectPicker) AgentProjectPickerDialog(
         state = state,
