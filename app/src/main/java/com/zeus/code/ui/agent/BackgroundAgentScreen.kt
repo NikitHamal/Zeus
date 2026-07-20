@@ -54,7 +54,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.PullToRefreshBox
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -195,130 +197,147 @@ private fun AgentDashboard(state: AgentUiState, viewModel: BackgroundAgentViewMo
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) viewModel.prepareUploads(uris) { uploads = it }
     }
+    var refreshing by remember { mutableStateOf(false) }
+    var refreshCounter by remember { mutableIntStateOf(0) }
 
-    LazyColumn(
-        Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        item {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("Background Agent", style = MaterialTheme.typography.headlineSmall)
-                    Text(
-                        if (state.worker.healthy) "Worker online" else "Worker unavailable",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-                IconButton(onClick = viewModel::refresh) { Icon(Icons.Rounded.Refresh, "Refresh agent") }
-                Box {
-                    IconButton(onClick = { accountMenu = true }) { Icon(Icons.Rounded.MoreVert, "Agent account options") }
-                    DropdownMenu(expanded = accountMenu, onDismissRequest = { accountMenu = false }) {
-                        DropdownMenuItem(
-                            text = { Text("AI providers") },
-                            onClick = { accountMenu = false; focusedPreset = null; providersDialog = true },
-                            leadingIcon = { Icon(Icons.Rounded.Tune, null) }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Disconnect NEBians") },
-                            onClick = { accountMenu = false; confirmDisconnect = true },
-                            leadingIcon = { Icon(Icons.Rounded.LinkOff, null) }
-                        )
-                    }
-                }
-            }
+    LaunchedEffect(refreshCounter) {
+        if (refreshCounter > 0 && !state.busy) {
+            refreshing = false
         }
-        item {
-            ElevatedCard(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("New task", style = MaterialTheme.typography.titleMedium)
-                    OutlinedButton(onClick = { projectPicker = true }, modifier = Modifier.fillMaxWidth()) {
-                        Icon(Icons.Rounded.Source, null, Modifier.size(17.dp))
-                        Spacer(Modifier.width(8.dp))
+    }
+
+    PullToRefreshBox(
+        isRefreshing = refreshing,
+        onRefresh = {
+            refreshing = true
+            refreshCounter++
+            viewModel.refresh()
+        }
+    ) {
+        LazyColumn(
+            Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            item {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Background Agent", style = MaterialTheme.typography.headlineSmall)
                         Text(
-                            state.selectedProject?.repoFullName ?: "Choose project",
+                            if (state.worker.healthy) "Worker online" else "Worker unavailable",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
                     }
-                    OutlinedButton(onClick = { modelPicker = true }, modifier = Modifier.fillMaxWidth()) {
-                        Icon(Icons.Rounded.AutoAwesome, null, Modifier.size(17.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            state.llmSelection.label.ifBlank { defaultLlmLabel(state.llmCatalog) },
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f)
-                        )
-                        Icon(Icons.Rounded.KeyboardArrowDown, null, Modifier.size(17.dp))
-                    }
-                    OutlinedTextField(
-                        value = goal,
-                        onValueChange = { goal = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text("What should the agent change?") },
-                        minLines = 3,
-                        maxLines = 7
-                    )
-                    if (uploads.isNotEmpty()) {
-                        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            uploads.forEach { upload -> AssistChip(onClick = {}, label = { Text(upload.name, maxLines = 1) }, leadingIcon = { Icon(Icons.Rounded.AttachFile, null) }) }
-                        }
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        FilledTonalButton(onClick = { filePicker.launch(arrayOf("*/*")) }, modifier = Modifier.weight(1f)) {
-                            Icon(Icons.Rounded.AttachFile, null)
-                            Spacer(Modifier.width(6.dp))
-                            Text("Attach")
-                        }
-                        Button(
-                            onClick = {
-                                viewModel.createSession(goal, uploads) {
-                                    goal = ""
-                                    uploads = emptyList<AgentUpload>()
-                                }
-                            },
-                            enabled = state.selectedProject != null && goal.trim().length >= 10 && !state.busy,
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Icon(Icons.Rounded.Send, null)
-                            Spacer(Modifier.width(6.dp))
-                            Text("Start")
+                    Box {
+                        IconButton(onClick = { accountMenu = true }) { Icon(Icons.Rounded.MoreVert, "Agent account options") }
+                        DropdownMenu(expanded = accountMenu, onDismissRequest = { accountMenu = false }) {
+                            DropdownMenuItem(
+                                text = { Text("AI providers") },
+                                onClick = { accountMenu = false; focusedPreset = null; providersDialog = true },
+                                leadingIcon = { Icon(Icons.Rounded.Tune, null) }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Disconnect NEBians") },
+                                onClick = { accountMenu = false; confirmDisconnect = true },
+                                leadingIcon = { Icon(Icons.Rounded.LinkOff, null) }
+                            )
                         }
                     }
                 }
             }
-        }
-        item {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(if (state.archivedMode) "Archived tasks" else "Recent tasks", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                FilterChip(selected = !state.archivedMode, onClick = { viewModel.setArchivedMode(false) }, label = { Text("Recent") })
-                Spacer(Modifier.width(6.dp))
-                FilterChip(selected = state.archivedMode, onClick = { viewModel.setArchivedMode(true) }, label = { Text("Archived") })
-            }
-        }
-        if (state.sessions.isEmpty()) {
             item {
-                OutlinedCard(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(22.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Icons.Rounded.AutoAwesome, null, Modifier.size(34.dp))
-                        Spacer(Modifier.height(10.dp))
-                        Text(if (state.archivedMode) "No archived tasks" else "No tasks yet", style = MaterialTheme.typography.titleMedium)
+                ElevatedCard(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("New task", style = MaterialTheme.typography.titleMedium)
+                        OutlinedButton(onClick = { projectPicker = true }, modifier = Modifier.fillMaxWidth()) {
+                            Icon(Icons.Rounded.Source, null, Modifier.size(17.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                state.selectedProject?.repoFullName ?: "Choose project",
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        OutlinedButton(onClick = { modelPicker = true }, modifier = Modifier.fillMaxWidth()) {
+                            Icon(Icons.Rounded.AutoAwesome, null, Modifier.size(17.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                state.llmSelection.label.ifBlank { defaultLlmLabel(state.llmCatalog) },
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Icon(Icons.Rounded.KeyboardArrowDown, null, Modifier.size(17.dp))
+                        }
+                        OutlinedTextField(
+                            value = goal,
+                            onValueChange = { goal = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("What should the agent change?") },
+                            minLines = 3,
+                            maxLines = 7
+                        )
+                        if (uploads.isNotEmpty()) {
+                            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                uploads.forEach { upload -> AssistChip(onClick = {}, label = { Text(upload.name, maxLines = 1) }, leadingIcon = { Icon(Icons.Rounded.AttachFile, null) }) }
+                            }
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            FilledTonalButton(onClick = { filePicker.launch(arrayOf("*/*")) }, modifier = Modifier.weight(1f)) {
+                                Icon(Icons.Rounded.AttachFile, null)
+                                Spacer(Modifier.width(6.dp))
+                                Text("Attach")
+                            }
+                            Button(
+                                onClick = {
+                                    viewModel.createSession(goal, uploads) {
+                                        goal = ""
+                                        uploads = emptyList<AgentUpload>()
+                                    }
+                                },
+                                enabled = state.selectedProject != null && goal.trim().length >= 10 && !state.busy,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(Icons.Rounded.Send, null)
+                                Spacer(Modifier.width(6.dp))
+                                Text("Start")
+                            }
+                        }
                     }
                 }
             }
-        } else {
-            items(state.sessions, key = { it.id }) { session ->
-                AgentSessionCard(
-                    session = session,
-                    unread = session.id in state.unreadIds,
-                    viewModel = viewModel
-                )
+            item {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(if (state.archivedMode) "Archived tasks" else "Recent tasks", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                    FilterChip(selected = !state.archivedMode, onClick = { viewModel.setArchivedMode(false) }, label = { Text("Recent") })
+                    Spacer(Modifier.width(6.dp))
+                    FilterChip(selected = state.archivedMode, onClick = { viewModel.setArchivedMode(true) }, label = { Text("Archived") })
+                }
+            }
+            if (state.sessions.isEmpty()) {
+                item {
+                    OutlinedCard(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(22.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(Icons.Rounded.AutoAwesome, null, Modifier.size(34.dp))
+                            Spacer(Modifier.height(10.dp))
+                            Text(if (state.archivedMode) "No archived tasks" else "No tasks yet", style = MaterialTheme.typography.titleMedium)
+                        }
+                    }
+                }
+            } else {
+                items(state.sessions, key = { it.id }) { session ->
+                    AgentSessionCard(
+                        session = session,
+                        unread = session.id in state.unreadIds,
+                        viewModel = viewModel
+                    )
+                }
             }
         }
+    }
     }
 
     if (projectPicker) AgentProjectPickerDialog(

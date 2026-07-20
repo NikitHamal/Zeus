@@ -98,6 +98,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
@@ -340,16 +341,6 @@ private fun MainShell(state: ZeusState, viewModel: MainViewModel, agentViewModel
     BackHandler(enabled = tab == MainTab.AGENT && agentState.selectedSession != null) { agentViewModel.closeSession() }
     BackHandler(enabled = settingsOpen) { settingsOpen = false }
 
-    val refreshAction: (() -> Unit)? = when {
-        settingsOpen -> null
-        tab == MainTab.AGENT -> ({ agentViewModel.refresh() })
-        tab == MainTab.GITHUB && state.selectedRepo != null -> viewModel::refreshSelectedRepository
-        tab == MainTab.GITHUB -> viewModel::refreshAccount
-        tab == MainTab.WORKSPACES && route is WorkspaceRoute.Detail -> viewModel::refreshWorkspace
-        tab == MainTab.WORKSPACES && route is WorkspaceRoute.List -> viewModel::refreshWorkspacesList
-        else -> null
-    }
-
     val title = when {
         settingsOpen -> "Settings"
         tab == MainTab.GITHUB && state.selectedRepo != null -> state.selectedRepo!!.name
@@ -392,9 +383,6 @@ private fun MainShell(state: ZeusState, viewModel: MainViewModel, agentViewModel
                             }
                         },
                         actions = {
-                            if (refreshAction != null) {
-                                IconButton(onClick = refreshAction) { Icon(Icons.Rounded.Refresh, "Refresh") }
-                            }
                             if (!settingsOpen) {
                                 IconButton(onClick = { settingsOpen = true }) { Icon(Icons.Rounded.Settings, "Settings") }
                             }
@@ -822,6 +810,14 @@ private fun WorkspaceDetailScreen(
     var diffCommit by remember { mutableStateOf<CommitInfo?>(null) }
     var menu by remember { mutableStateOf(false) }
     var section by rememberSaveable(workspace.path) { mutableIntStateOf(0) }
+    var refreshing by remember { mutableStateOf(false) }
+    var refreshCounter by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(refreshCounter) {
+        if (refreshCounter > 0 && !state.busy) {
+            refreshing = false
+        }
+    }
 
     Column(Modifier.fillMaxSize()) {
         // Standalone header (no shell chrome on this screen)
@@ -847,7 +843,6 @@ private fun WorkspaceDetailScreen(
                     overflow = TextOverflow.Ellipsis
                 )
             }
-            IconButton(onClick = viewModel::refreshWorkspace) { Icon(Icons.Rounded.Refresh, "Refresh workspace") }
         }
         // Actions block
         Column(Modifier.padding(horizontal = 20.dp)) {
@@ -938,84 +933,93 @@ private fun WorkspaceDetailScreen(
             Spacer(Modifier.height(10.dp))
         }
 
-        if (section == 0) {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 4.dp),
-                verticalArrangement = Arrangement.spacedBy(2.dp)
-            ) {
-                if (state.files.isEmpty()) {
-                    item {
-                        EmptyState(
-                            icon = Icons.Rounded.Description,
-                            title = "Empty workspace",
-                            body = "Create a file or import project content."
-                        )
-                    }
-                } else {
-                    items(state.files, key = { it.path }) { entry ->
-                        FileRow(
-                            entry = entry,
-                            onOpen = { if (!entry.directory) onEdit(entry) },
-                            onDelete = { viewModel.deletePath(entry) }
-                        )
-                    }
-                }
+        PullToRefreshBox(
+            isRefreshing = refreshing,
+            onRefresh = {
+                refreshing = true
+                refreshCounter++
+                viewModel.refreshWorkspace()
             }
-        } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 4.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                item {
-                    OutlinedCard(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large) {
-                        SelectionContainer {
-                            Text(
-                                state.gitStatus,
-                                Modifier.padding(16.dp),
-                                fontFamily = FontFamily.Monospace,
-                                style = MaterialTheme.typography.bodyMedium
+        ) {
+            if (section == 0) {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(horizontal = 20.dp, vertical = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    if (state.files.isEmpty()) {
+                        item {
+                            EmptyState(
+                                icon = Icons.Rounded.Description,
+                                title = "Empty workspace",
+                                body = "Create a file or import project content."
+                            )
+                        }
+                    } else {
+                        items(state.files, key = { it.path }) { entry ->
+                            FileRow(
+                                entry = entry,
+                                onOpen = { if (!entry.directory) onEdit(entry) },
+                                onDelete = { viewModel.deletePath(entry) }
                             )
                         }
                     }
                 }
-                item { SectionTitle("Recent commits") }
-                if (state.commits.isEmpty()) {
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(horizontal = 20.dp, vertical = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
                     item {
-                        EmptyState(Icons.Rounded.Source, "No commits", "Initialize Git and create your first commit.")
+                        OutlinedCard(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large) {
+                            SelectionContainer {
+                                Text(
+                                    state.gitStatus,
+                                    Modifier.padding(16.dp),
+                                    fontFamily = FontFamily.Monospace,
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                            }
+                        }
                     }
-                } else {
-                    items(state.commits, key = { it.hash }) { commit ->
-                        TonalCard(onClick = { diffCommit = commit }) {
-                            Column {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Surface(
-                                        color = MaterialTheme.colorScheme.primaryContainer,
-                                        shape = MaterialTheme.shapes.small
-                                    ) {
+                    item { SectionTitle("Recent commits") }
+                    if (state.commits.isEmpty()) {
+                        item {
+                            EmptyState(Icons.Rounded.Source, "No commits", "Initialize Git and create your first commit.")
+                        }
+                    } else {
+                        items(state.commits, key = { it.hash }) { commit ->
+                            TonalCard(onClick = { diffCommit = commit }) {
+                                Column {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Surface(
+                                            color = MaterialTheme.colorScheme.primaryContainer,
+                                            shape = MaterialTheme.shapes.small
+                                        ) {
+                                            Text(
+                                                commit.shortHash,
+                                                Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                                fontFamily = FontFamily.Monospace,
+                                                style = MaterialTheme.typography.labelMedium,
+                                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                                            )
+                                        }
+                                        Spacer(Modifier.weight(1f))
                                         Text(
-                                            commit.shortHash,
-                                            Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                            fontFamily = FontFamily.Monospace,
+                                            "View diff",
                                             style = MaterialTheme.typography.labelMedium,
-                                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                                            color = MaterialTheme.colorScheme.primary
                                         )
                                     }
-                                    Spacer(Modifier.weight(1f))
+                                    Spacer(Modifier.height(8.dp))
+                                    Text(commit.message, style = MaterialTheme.typography.titleSmall)
                                     Text(
-                                        "View diff",
+                                        "${commit.author} · ${DateFormat.getDateTimeInstance().format(Date(commit.timestamp))}",
                                         style = MaterialTheme.typography.labelMedium,
-                                        color = MaterialTheme.colorScheme.primary
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
-                                Spacer(Modifier.height(8.dp))
-                                Text(commit.message, style = MaterialTheme.typography.titleSmall)
-                                Text(
-                                    "${commit.author} · ${DateFormat.getDateTimeInstance().format(Date(commit.timestamp))}",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
                             }
                         }
                     }
@@ -1416,6 +1420,14 @@ private fun RepositoryDetailScreen(state: ZeusState, viewModel: MainViewModel, r
     var deleteConfirm by remember { mutableStateOf(false) }
     var reviewPull by remember { mutableStateOf<PullRequest?>(null) }
     val uriHandler = LocalUriHandler.current
+    var refreshing by remember { mutableStateOf(false) }
+    var refreshCounter by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(refreshCounter) {
+        if (refreshCounter > 0 && !state.busy) {
+            refreshing = false
+        }
+    }
 
     Column(Modifier.fillMaxSize()) {
         // Standalone header (no shell chrome on this screen)
@@ -1436,7 +1448,6 @@ private fun RepositoryDetailScreen(state: ZeusState, viewModel: MainViewModel, r
                     overflow = TextOverflow.Ellipsis
                 )
             }
-            IconButton(onClick = viewModel::refreshSelectedRepository) { Icon(Icons.Rounded.Refresh, "Refresh repository") }
         }
         Column(Modifier.padding(horizontal = 20.dp)) {
             Spacer(Modifier.height(2.dp))
@@ -1496,68 +1507,77 @@ private fun RepositoryDetailScreen(state: ZeusState, viewModel: MainViewModel, r
             }
         }
 
-        when (tab) {
-            0 -> LazyColumn(
-                contentPadding = PaddingValues(20.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                item { SectionTitle("Branches") }
-                if (state.branches.isEmpty()) {
-                    item { Text("No branches loaded.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                }
-                items(state.branches, key = { it.name }) { branch ->
-                    TonalCard {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Rounded.AccountTree, null, Modifier.size(19.dp), tint = MaterialTheme.colorScheme.primary)
-                            Spacer(Modifier.width(12.dp))
-                            Text(branch.name, Modifier.weight(1f), fontFamily = FontFamily.Monospace, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            if (branch.protected) {
-                                Text("Protected", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        PullToRefreshBox(
+            isRefreshing = refreshing,
+            onRefresh = {
+                refreshing = true
+                refreshCounter++
+                viewModel.refreshSelectedRepository()
+            }
+        ) {
+            when (tab) {
+                0 -> LazyColumn(
+                    contentPadding = PaddingValues(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    item { SectionTitle("Branches") }
+                    if (state.branches.isEmpty()) {
+                        item { Text("No branches loaded.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    }
+                    items(state.branches, key = { it.name }) { branch ->
+                        TonalCard {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Rounded.AccountTree, null, Modifier.size(19.dp), tint = MaterialTheme.colorScheme.primary)
+                                Spacer(Modifier.width(12.dp))
+                                Text(branch.name, Modifier.weight(1f), fontFamily = FontFamily.Monospace, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                if (branch.protected) {
+                                    Text("Protected", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
                             }
                         }
                     }
                 }
-            }
-            1 -> LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                item {
-                    FilledTonalButton(onClick = { pullDialog = true }, modifier = Modifier.fillMaxWidth()) {
-                        Icon(Icons.Rounded.Add, null)
-                        Spacer(Modifier.width(8.dp))
-                        Text("New pull request")
+                1 -> LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    item {
+                        FilledTonalButton(onClick = { pullDialog = true }, modifier = Modifier.fillMaxWidth()) {
+                            Icon(Icons.Rounded.Add, null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("New pull request")
+                        }
+                    }
+                    if (state.pullRequests.isEmpty()) {
+                        item { EmptyState(Icons.Rounded.CallMerge, "No pull requests", "Create one from a pushed branch.") }
+                    }
+                    items(state.pullRequests, key = { it.number }) { pull ->
+                        PullRow(pull, onMerge = { viewModel.mergePull(pull, "merge") }, onReview = { reviewPull = pull })
                     }
                 }
-                if (state.pullRequests.isEmpty()) {
-                    item { EmptyState(Icons.Rounded.CallMerge, "No pull requests", "Create one from a pushed branch.") }
-                }
-                items(state.pullRequests, key = { it.number }) { pull ->
-                    PullRow(pull, onMerge = { viewModel.mergePull(pull, "merge") }, onReview = { reviewPull = pull })
-                }
-            }
-            2 -> LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                item {
-                    FilledTonalButton(onClick = { issueDialog = true }, modifier = Modifier.fillMaxWidth()) {
-                        Icon(Icons.Rounded.Add, null)
-                        Spacer(Modifier.width(8.dp))
-                        Text("New issue")
+                2 -> LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    item {
+                        FilledTonalButton(onClick = { issueDialog = true }, modifier = Modifier.fillMaxWidth()) {
+                            Icon(Icons.Rounded.Add, null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("New issue")
+                        }
                     }
-                }
-                if (state.issues.isEmpty()) {
-                    item { EmptyState(Icons.Rounded.ErrorOutline, "No issues", "This repository has no issues.") }
-                }
-                items(state.issues, key = { it.number }) { issue ->
-                    TonalCard {
-                        Column {
-                            Text("#${issue.number} · ${issue.title}", style = MaterialTheme.typography.titleSmall)
-                            Text(
-                                "${issue.state} · ${issue.user.login}",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                    if (state.issues.isEmpty()) {
+                        item { EmptyState(Icons.Rounded.ErrorOutline, "No issues", "This repository has no issues.") }
+                    }
+                    items(state.issues, key = { it.number }) { issue ->
+                        TonalCard {
+                            Column {
+                                Text("#${issue.number} · ${issue.title}", style = MaterialTheme.typography.titleSmall)
+                                Text(
+                                    "${issue.state} · ${issue.user.login}",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                     }
                 }
+                3 -> ActionsTabContent(state, viewModel)
             }
-            3 -> ActionsTabContent(state, viewModel)
         }
     }
 
