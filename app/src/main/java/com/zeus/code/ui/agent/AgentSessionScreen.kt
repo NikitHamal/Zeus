@@ -195,21 +195,9 @@ internal fun AgentSessionScreen(
         }
 
         // -----------------------------------------------------------------
-        // Live progress strip
+        // Session status + controls
         // -----------------------------------------------------------------
         Column(Modifier.padding(horizontal = 14.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                LinearProgressIndicator(
-                    progress = { session.progress.coerceIn(0, 100) / 100f },
-                    modifier = Modifier.weight(1f).height(4.dp),
-                )
-                Spacer(Modifier.width(10.dp))
-                Text(
-                    "${session.progress}%",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
             Row(
                 Modifier.fillMaxWidth().padding(top = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
