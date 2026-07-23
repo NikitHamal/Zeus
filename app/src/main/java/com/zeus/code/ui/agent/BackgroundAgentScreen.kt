@@ -302,7 +302,6 @@ private fun AgentDashboard(state: AgentUiState, viewModel: BackgroundAgentViewMo
                             unfocusedIndicatorColor = Color.Transparent,
                             disabledIndicatorColor = Color.Transparent
                         ),
-                        contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp),
                         textStyle = MaterialTheme.typography.bodyLarge,
                         minLines = 2,
                         maxLines = 6
