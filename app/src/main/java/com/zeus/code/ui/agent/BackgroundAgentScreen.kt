@@ -25,9 +25,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Archive
+import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.AttachFile
 import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.Link
@@ -36,8 +39,6 @@ import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.OpenInBrowser
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Restore
-import androidx.compose.material.icons.rounded.Send
-import androidx.compose.material.icons.rounded.Source
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -45,18 +46,17 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -65,6 +65,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.AnnotatedString
@@ -233,60 +234,153 @@ private fun AgentDashboard(state: AgentUiState, viewModel: BackgroundAgentViewMo
         }
         item {
             ElevatedCard(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("New task", style = MaterialTheme.typography.titleMedium)
-                    OutlinedButton(onClick = { projectPicker = true }, modifier = Modifier.fillMaxWidth()) {
-                        Icon(Icons.Rounded.Source, null, Modifier.size(17.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            state.selectedProject?.repoFullName ?: "Choose project",
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            Modifier.clickable(enabled = !state.busy) { projectPicker = true },
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            val project = state.selectedProject
+                            val repoShort = project?.repoFullName
+                                ?.substringAfterLast('/', project.repoFullName)
+                                .orEmpty()
+                            Text(
+                                text = repoShort.ifBlank { "Choose project" },
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                color = if (project == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface
+                            )
+                            val branch = state.selectedBranch.ifBlank {
+                                project?.preferredBaseBranch ?: project?.defaultBranch ?: ""
+                            }
+                            if (branch.isNotBlank()) {
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    branch,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Spacer(Modifier.width(2.dp))
+                            Icon(
+                                Icons.Rounded.KeyboardArrowDown,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Spacer(Modifier.weight(1f))
+                        IconButton(onClick = viewModel::refresh, modifier = Modifier.size(32.dp)) {
+                            Icon(
+                                Icons.Rounded.Cloud,
+                                contentDescription = if (state.worker.healthy) "Worker online" else "Worker unavailable",
+                                modifier = Modifier.size(20.dp),
+                                tint = if (state.worker.healthy) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error
+                            )
+                        }
                     }
-                    OutlinedButton(onClick = { modelPicker = true }, modifier = Modifier.fillMaxWidth()) {
-                        Icon(Icons.Rounded.AutoAwesome, null, Modifier.size(17.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            state.llmSelection.label.ifBlank { defaultLlmLabel(state.llmCatalog) },
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f)
-                        )
-                        Icon(Icons.Rounded.KeyboardArrowDown, null, Modifier.size(17.dp))
-                    }
-                    OutlinedTextField(
+                    Spacer(Modifier.height(4.dp))
+                    TextField(
                         value = goal,
                         onValueChange = { goal = it },
                         modifier = Modifier.fillMaxWidth(),
-                        label = { Text("What should the agent change?") },
-                        minLines = 3,
-                        maxLines = 7
+                        placeholder = {
+                            Text(
+                                "What should the agent change?",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        },
+                        colors = TextFieldDefaults.colors(
+                            focusedContainerColor = Color.Transparent,
+                            unfocusedContainerColor = Color.Transparent,
+                            disabledContainerColor = Color.Transparent,
+                            focusedIndicatorColor = Color.Transparent,
+                            unfocusedIndicatorColor = Color.Transparent,
+                            disabledIndicatorColor = Color.Transparent
+                        ),
+                        contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp),
+                        textStyle = MaterialTheme.typography.bodyLarge,
+                        minLines = 2,
+                        maxLines = 6
                     )
                     if (uploads.isNotEmpty()) {
-                        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            uploads.forEach { upload -> AssistChip(onClick = {}, label = { Text(upload.name, maxLines = 1) }, leadingIcon = { Icon(Icons.Rounded.AttachFile, null) }) }
+                        Spacer(Modifier.height(2.dp))
+                        Row(
+                            Modifier.horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            uploads.forEach { upload ->
+                                AssistChip(
+                                    onClick = {},
+                                    label = { Text(upload.name, maxLines = 1, style = MaterialTheme.typography.labelSmall) },
+                                    leadingIcon = { Icon(Icons.Rounded.AttachFile, null, Modifier.size(14.dp)) }
+                                )
+                            }
                         }
+                        Spacer(Modifier.height(4.dp))
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        FilledTonalButton(onClick = { filePicker.launch(arrayOf("*/*")) }, modifier = Modifier.weight(1f)) {
-                            Icon(Icons.Rounded.AttachFile, null)
-                            Spacer(Modifier.width(6.dp))
-                            Text("Attach")
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Surface(
+                            onClick = { filePicker.launch(arrayOf("*/*")) },
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier.size(38.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    Icons.Rounded.Add,
+                                    contentDescription = "Attach files",
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
                         }
-                        Button(
+                        Spacer(Modifier.width(8.dp))
+                        Row(
+                            Modifier.weight(1f).clickable { modelPicker = true }.padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                state.llmSelection.label.ifBlank { defaultLlmLabel(state.llmCatalog) },
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Spacer(Modifier.width(2.dp))
+                            Icon(
+                                Icons.Rounded.KeyboardArrowDown,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        val canSend = state.selectedProject != null && goal.trim().length >= 10 && !state.busy
+                        Surface(
                             onClick = {
                                 viewModel.createSession(goal, uploads) {
                                     goal = ""
                                     uploads = emptyList<AgentUpload>()
                                 }
                             },
-                            enabled = state.selectedProject != null && goal.trim().length >= 10 && !state.busy,
-                            modifier = Modifier.weight(1f)
+                            enabled = canSend,
+                            shape = CircleShape,
+                            color = if (canSend) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier.size(38.dp)
                         ) {
-                            Icon(Icons.Rounded.Send, null)
-                            Spacer(Modifier.width(6.dp))
-                            Text("Start")
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    Icons.Rounded.ArrowUpward,
+                                    contentDescription = "Start task",
+                                    modifier = Modifier.size(20.dp),
+                                    tint = if (canSend) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                     }
                 }
