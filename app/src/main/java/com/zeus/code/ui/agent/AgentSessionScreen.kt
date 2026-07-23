@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -27,6 +28,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Send
@@ -371,9 +373,6 @@ private fun ActivityTab(session: AgentSession, state: AgentUiState, viewModel: B
                     )
                 }
             }
-            if (session.todos.isNotEmpty()) {
-                item { AgentPlanCard(session.todos) }
-            }
             items(visibleMessages, key = { it.id }) { message ->
                 when {
                     message.isThought -> ThoughtRow(message)
@@ -382,9 +381,6 @@ private fun ActivityTab(session: AgentSession, state: AgentUiState, viewModel: B
                     message.role == "tool" -> ToolCallRow(message)
                     else -> AssistantBubble(message)
                 }
-            }
-            if (session.summary.isNotBlank() || session.lastError.isNotBlank()) {
-                item { SessionOutcomeCard(session) }
             }
             if (session.status in listOf("queued", "preparing", "running")) {
                 item {
@@ -414,6 +410,10 @@ private fun ActivityTab(session: AgentSession, state: AgentUiState, viewModel: B
             shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
         ) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp)) {
+                if (session.todos.isNotEmpty()) {
+                    AgentPlanCard(session.todos)
+                    Spacer(Modifier.height(6.dp))
+                }
                 if (uploads.isNotEmpty()) {
                     Row(
                         Modifier.horizontalScroll(rememberScrollState()).padding(bottom = 6.dp),
@@ -459,41 +459,6 @@ private fun ActivityTab(session: AgentSession, state: AgentUiState, viewModel: B
             }
         }
     }
-}
-
-@Composable
-private fun SessionOutcomeCard(session: AgentSession) {
-    val isError = session.lastError.isNotBlank()
-    Surface(
-        color = if (isError) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.tertiaryContainer,
-        shape = MaterialTheme.shapes.medium
-    ) {
-        Column(Modifier.padding(12.dp)) {
-            if (session.summary.isNotBlank()) {
-                SessionOutcomeCardSection("Outcome") { MarkdownContent(session.summary, textSize = MaterialTheme.typography.bodyMedium.fontSize) }
-            }
-            if (session.testSummary.isNotBlank()) {
-                Spacer(Modifier.height(4.dp))
-                SessionOutcomeCardSection("Validation") { Text(session.testSummary, style = MaterialTheme.typography.bodySmall) }
-            }
-            if (isError) {
-                Spacer(Modifier.height(4.dp))
-                SessionOutcomeCardSection("Error", MaterialTheme.colorScheme.onErrorContainer) {
-                    Text(session.lastError, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onErrorContainer)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun SessionOutcomeCardSection(
-    label: String,
-    color: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.onTertiaryContainer,
-    content: @Composable () -> Unit
-) {
-    Text(label, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold, color = color)
-    content()
 }
 
 /* ======================================================================= */
@@ -661,7 +626,7 @@ private fun CommandRow(message: AgentMessage) {
 
 @Composable
 private fun AgentPlanCard(todos: List<AgentTodo>) {
-    var expanded by remember { mutableStateOf(true) }
+    var expanded by remember { mutableStateOf(false) }
     val done = todos.count { it.status == "completed" }
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -706,7 +671,12 @@ private fun AgentPlanCard(todos: List<AgentTodo>) {
                 )
             }
             if (expanded) {
-                Column(Modifier.padding(start = 12.dp, end = 12.dp, bottom = 10.dp)) {
+                Column(
+                    Modifier
+                        .padding(start = 12.dp, end = 12.dp, bottom = 10.dp)
+                        .heightIn(max = 220.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
                     todos.forEach { todo ->
                         val completed = todo.status == "completed"
                         val inProgress = todo.status == "in_progress"
