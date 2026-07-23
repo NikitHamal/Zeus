@@ -405,7 +405,6 @@ private fun AgentSessionCard(session: AgentSession, unread: Boolean, viewModel: 
                 overflow = TextOverflow.Ellipsis,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            LinearProgressIndicator(progress = { session.progress.coerceIn(0, 100) / 100f }, modifier = Modifier.fillMaxWidth())
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(session.progressLabel, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                 Text(formatAgentTime(session.updatedAt), style = MaterialTheme.typography.labelMedium)
