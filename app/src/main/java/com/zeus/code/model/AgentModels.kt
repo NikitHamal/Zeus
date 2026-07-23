@@ -91,7 +91,7 @@ data class AgentBranch(
 @Serializable
 data class AgentContext(
     val estimatedTokens: Int = 0,
-    val windowTokens: Int = 131072,
+    val windowTokens: Int = 1000000,
     val percent: Int = 0,
     val compactions: Int = 0
 )
@@ -243,7 +243,7 @@ data class AgentLlmProviderEntry(
     val label: String,
     val format: String = "openai",
     val baseUrl: String = "",
-    val contextWindow: Int = 131072,
+    val contextWindow: Int = 1000000,
     val freeNote: String = "",
     val official: Boolean = true,
     val available: Boolean = false,
@@ -281,7 +281,7 @@ data class AgentLlmSavedProvider(
     val keySet: Boolean = false,
     val models: List<String> = emptyList(),
     val defaultModel: String = "",
-    val contextWindow: Int = 131072,
+    val contextWindow: Int = 1000000,
     val maxOutputTokens: Int = 4096,
     val enabled: Boolean = true,
     val updatedAt: Long = 0

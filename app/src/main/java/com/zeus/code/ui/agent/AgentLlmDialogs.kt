@@ -647,7 +647,7 @@ private fun AgentCustomProviderDialog(
     var apiKey by remember { mutableStateOf("") }
     var modelsCsv by remember { mutableStateOf(row?.models?.joinToString(", ") ?: "") }
     var defaultModel by remember { mutableStateOf(row?.defaultModel ?: "") }
-    var ctxWindow by remember { mutableStateOf(row?.contextWindow?.toString() ?: "131072") }
+    var ctxWindow by remember { mutableStateOf(row?.contextWindow?.toString() ?: "1000000") }
     var maxOut by remember { mutableStateOf(row?.maxOutputTokens?.toString() ?: "4096") }
     var testing by remember { mutableStateOf(false) }
     var testResult by remember { mutableStateOf<AgentLlmTestResponse?>(null) }
