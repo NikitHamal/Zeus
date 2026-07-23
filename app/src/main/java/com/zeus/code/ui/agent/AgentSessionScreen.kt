@@ -344,10 +344,13 @@ private fun ActivityTab(session: AgentSession, state: AgentUiState, viewModel: B
         if (uris.isNotEmpty()) viewModel.prepareUploads(uris) { uploads = it }
     }
 
+    // Hide system-prompt messages so they are never shown in the chat UI.
+    val visibleMessages = session.messages.filter { it.role != "system" }
+
     // Keep the newest message in view — no more scrolling through old activity.
-    LaunchedEffect(session.messages.size) {
-        if (session.messages.isNotEmpty()) {
-            listState.animateScrollToItem(session.messages.lastIndex)
+    LaunchedEffect(visibleMessages.size) {
+        if (visibleMessages.isNotEmpty()) {
+            listState.animateScrollToItem(visibleMessages.lastIndex)
         }
     }
 
@@ -361,7 +364,7 @@ private fun ActivityTab(session: AgentSession, state: AgentUiState, viewModel: B
             if (session.summary.isNotBlank() || session.lastError.isNotBlank()) {
                 item { SessionOutcomeCard(session) }
             }
-            if (session.messages.isEmpty()) {
+            if (visibleMessages.isEmpty()) {
                 item {
                     EmptyPane(
                         icon = Icons.Rounded.AutoAwesome,
@@ -373,7 +376,7 @@ private fun ActivityTab(session: AgentSession, state: AgentUiState, viewModel: B
             if (session.todos.isNotEmpty()) {
                 item { AgentPlanCard(session.todos) }
             }
-            items(session.messages, key = { it.id }) { message ->
+            items(visibleMessages, key = { it.id }) { message ->
                 when {
                     message.isThought -> ThoughtRow(message)
                     message.isCommand -> CommandRow(message)
