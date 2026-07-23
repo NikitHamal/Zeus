@@ -1,5 +1,6 @@
 package com.zeus.code.data
 
+import android.content.Context
 import com.zeus.code.BuildConfig
 import com.zeus.code.model.AgentBranchesResponse
 import com.zeus.code.model.AgentEventsResponse
@@ -36,13 +37,15 @@ class BackgroundAgentApiException(
     override val message: String
 ) : Exception(message)
 
-class BackgroundAgentApi {
+class BackgroundAgentApi(context: Context) {
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
     private val client = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(45, TimeUnit.SECONDS)
         .writeTimeout(45, TimeUnit.SECONDS)
         .callTimeout(90, TimeUnit.SECONDS)
+        .addInterceptor(WafChallengeInterceptor(context))
+        .addInterceptor(RetryInterceptor())
         .build()
     private val origin = BuildConfig.BACKGROUND_AGENT_BASE_URL.trimEnd('/')
     private val originUri = URI(origin)

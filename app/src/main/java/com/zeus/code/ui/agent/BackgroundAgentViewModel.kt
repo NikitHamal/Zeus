@@ -89,7 +89,7 @@ data class AgentLlmSelection(
 }
 
 class BackgroundAgentViewModel(application: Application) : AndroidViewModel(application) {
-    private val api = BackgroundAgentApi()
+    private val api = BackgroundAgentApi(application)
     private val store = SecureTokenStore(application, "background_agent")
     private val seenPrefs = application.getSharedPreferences("zeus_agent_seen", android.content.Context.MODE_PRIVATE)
     private val _state = MutableStateFlow(AgentUiState())
