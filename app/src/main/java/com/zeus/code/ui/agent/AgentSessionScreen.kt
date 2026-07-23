@@ -96,6 +96,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
@@ -361,9 +362,6 @@ private fun ActivityTab(session: AgentSession, state: AgentUiState, viewModel: B
             contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            if (session.summary.isNotBlank() || session.lastError.isNotBlank()) {
-                item { SessionOutcomeCard(session) }
-            }
             if (visibleMessages.isEmpty()) {
                 item {
                     EmptyPane(
@@ -384,6 +382,9 @@ private fun ActivityTab(session: AgentSession, state: AgentUiState, viewModel: B
                     message.role == "tool" -> ToolCallRow(message)
                     else -> AssistantBubble(message)
                 }
+            }
+            if (session.summary.isNotBlank() || session.lastError.isNotBlank()) {
+                item { SessionOutcomeCard(session) }
             }
             if (session.status in listOf("queued", "preparing", "running")) {
                 item {
@@ -850,21 +851,75 @@ private fun ToolCallRow(message: AgentMessage) {
             }
         }
         if (expanded && message.content.isNotBlank()) {
+            val content = message.content
+            val isDiff = content.lineSequence().any {
+                it.startsWith("diff --git") || it.startsWith("@@") ||
+                    (it.startsWith("+") && !it.startsWith("+++")) ||
+                    (it.startsWith("-") && !it.startsWith("---"))
+            }
             Surface(
                 color = MaterialTheme.colorScheme.surfaceContainer,
                 shape = MaterialTheme.shapes.small,
                 modifier = Modifier.fillMaxWidth().padding(start = 20.dp, top = 2.dp, bottom = 4.dp)
             ) {
-                SelectionContainer {
-                    Text(
-                        message.content,
-                        style = MaterialTheme.typography.bodySmall,
-                        fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(8.dp)
-                    )
+                Column(Modifier.padding(8.dp)) {
+                    ToolContentStats(content, verb.label)
+                    if (isDiff) {
+                        DiffView(content, Modifier.padding(top = 4.dp))
+                    } else {
+                        SelectionContainer {
+                            Text(
+                                content,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ToolContentStats(content: String, verbLabel: String) {
+    val added = content.lineSequence().count { it.startsWith("+") && !it.startsWith("+++") }
+    val removed = content.lineSequence().count { it.startsWith("-") && !it.startsWith("---") }
+    val totalLines = content.lineSequence().count()
+    val isReadLike = verbLabel == "Read" || verbLabel == "Listed dir" || verbLabel == "Searched"
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        if (added > 0 || removed > 0) {
+            if (added > 0) {
+                Text(
+                    "+$added",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    fontFamily = FontFamily.Monospace,
+                    color = Color(0xFF4CAF50)
+                )
+            }
+            if (removed > 0) {
+                Text(
+                    "-$removed",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    fontFamily = FontFamily.Monospace,
+                    color = Color(0xFFF44336)
+                )
+            }
+        } else if (isReadLike && totalLines > 0) {
+            Text(
+                "$totalLines lines",
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Medium,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }
