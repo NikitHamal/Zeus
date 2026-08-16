@@ -63,7 +63,7 @@ class PhoneOverlayManager(private val context: Context) {
         val density = context.resources.displayMetrics.density
         fun dp(v: Float) = (v * density).toInt()
 
-        val layoutParams = WindowManager.LayoutParams(
+        val windowParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
@@ -108,16 +108,14 @@ class PhoneOverlayManager(private val context: Context) {
         val phoneIcon = ImageView(context).apply {
             setImageResource(android.R.drawable.stat_sys_phone_call)
             setColorFilter(Color.WHITE)
-            layoutParams = LinearLayout.LayoutParams(dp(16f), dp(16f))
         }
-        iconContainer.addView(phoneIcon)
+        iconContainer.addView(phoneIcon, LinearLayout.LayoutParams(dp(16f), dp(16f)))
         container.addView(iconContainer)
 
         // Middle Text column (Step Title + Action description)
         val textColumn = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(10f), 0, dp(14f), 0)
-            layoutParams = LinearLayout.LayoutParams(dp(180f), LinearLayout.LayoutParams.WRAP_CONTENT)
         }
 
         val stepTitle = TextView(context).apply {
@@ -138,33 +136,31 @@ class PhoneOverlayManager(private val context: Context) {
         }
         statusTextView = statusDesc
         textColumn.addView(statusDesc)
-        container.addView(textColumn)
+        container.addView(textColumn, LinearLayout.LayoutParams(dp(180f), LinearLayout.LayoutParams.WRAP_CONTENT))
 
         // Pause/Resume button
         val pauseButton = ImageView(context).apply {
             setImageResource(android.R.drawable.ic_media_pause)
             setColorFilter(0xFFCCCCCC.toInt())
             setPadding(dp(6f), dp(6f), dp(6f), dp(6f))
-            layoutParams = LinearLayout.LayoutParams(dp(28f), dp(28f))
             setOnClickListener {
                 onPauseClicked?.invoke()
             }
         }
         pauseIconView = pauseButton
-        container.addView(pauseButton)
+        container.addView(pauseButton, LinearLayout.LayoutParams(dp(28f), dp(28f)))
 
         // Close / Stop button
         val stopButton = ImageView(context).apply {
             setImageResource(android.R.drawable.ic_menu_close_clear_cancel)
             setColorFilter(0xFFFF6B6B.toInt())
             setPadding(dp(6f), dp(6f), dp(6f), dp(6f))
-            layoutParams = LinearLayout.LayoutParams(dp(28f), dp(28f))
             setOnClickListener {
                 onStopClicked?.invoke()
                 hide()
             }
         }
-        container.addView(stopButton)
+        container.addView(stopButton, LinearLayout.LayoutParams(dp(28f), dp(28f)))
 
         // Drag handling
         container.setOnTouchListener(object : View.OnTouchListener {
@@ -176,16 +172,16 @@ class PhoneOverlayManager(private val context: Context) {
             override fun onTouch(v: View, event: MotionEvent): Boolean {
                 when (event.action) {
                     MotionEvent.ACTION_DOWN -> {
-                        initialX = layoutParams.x
-                        initialY = layoutParams.y
+                        initialX = windowParams.x
+                        initialY = windowParams.y
                         initialTouchX = event.rawX
                         initialTouchY = event.rawY
                         return false
                     }
                     MotionEvent.ACTION_MOVE -> {
-                        layoutParams.x = initialX + (event.rawX - initialTouchX).toInt()
-                        layoutParams.y = initialY - (event.rawY - initialTouchY).toInt()
-                        runCatching { windowManager.updateViewLayout(container, layoutParams) }
+                        windowParams.x = initialX + (event.rawX - initialTouchX).toInt()
+                        windowParams.y = initialY - (event.rawY - initialTouchY).toInt()
+                        runCatching { windowManager.updateViewLayout(container, windowParams) }
                         return false
                     }
                 }
@@ -194,7 +190,7 @@ class PhoneOverlayManager(private val context: Context) {
         })
 
         overlayView = container
-        runCatching { windowManager.addView(container, layoutParams) }
+        runCatching { windowManager.addView(container, windowParams) }
     }
 
     fun update(currentStep: Int, maxSteps: Int, statusText: String) {

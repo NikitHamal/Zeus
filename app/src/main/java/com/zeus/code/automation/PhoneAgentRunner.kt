@@ -3,6 +3,7 @@ package com.zeus.code.automation
 import android.content.Context
 import com.zeus.code.data.BackgroundAgentApi
 import com.zeus.code.data.SecureTokenStore
+import com.zeus.code.model.AgentChatResponse
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -91,14 +92,15 @@ class PhoneAgentRunner(
             return
         }
 
-        val token = tokenStore.get()
-        if (token.isNullOrBlank()) {
+        val savedToken = tokenStore.read()
+        if (savedToken.isNullOrBlank()) {
             _messages.value = _messages.value + PhoneChatMessage(
                 sender = "system",
                 text = "⚠️ Please connect Zeus to NEBians from the Agent tab first to authenticate cloud LLM execution."
             )
             return
         }
+        val token: String = savedToken
 
         _isRunning.value = true
         _isPaused.value = false

@@ -58,6 +58,8 @@ class SecureTokenStore(context: Context, namespace: String = "github") {
         String(cipher.doFinal(Base64.decode(encrypted, Base64.NO_WRAP)), Charsets.UTF_8)
     }.getOrNull()
 
+    fun get(): String? = read()
+
     fun clear() {
         preferences.edit().clear().commit()
     }

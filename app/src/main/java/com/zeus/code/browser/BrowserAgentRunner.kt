@@ -3,6 +3,7 @@ package com.zeus.code.browser
 import android.content.Context
 import com.zeus.code.data.BackgroundAgentApi
 import com.zeus.code.data.SecureTokenStore
+import com.zeus.code.model.AgentChatResponse
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -118,7 +119,7 @@ class BrowserAgentRunner(
         model: String,
         providerId: String
     ) = withContext(Dispatchers.IO) {
-        val token = tokenStore.get()
+        val token = tokenStore.read()
         val maxIterations = 20
 
         for (iteration in 1..maxIterations) {

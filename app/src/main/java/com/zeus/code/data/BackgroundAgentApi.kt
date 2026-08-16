@@ -3,6 +3,7 @@ package com.zeus.code.data
 import android.content.Context
 import com.zeus.code.BuildConfig
 import com.zeus.code.model.AgentBranchesResponse
+import com.zeus.code.model.AgentChatResponse
 import com.zeus.code.model.AgentEventsResponse
 import com.zeus.code.model.AgentLlmProvidersResponse
 import com.zeus.code.model.AgentLlmTestResponse
