@@ -495,6 +495,9 @@ private fun MainShell(state: ZeusState, viewModel: MainViewModel, agentViewModel
                         onCloneBranch = { url, name, branch ->
                             viewModel.cloneUrl(url, name, branch)
                             selectedTab = MainTab.WORKSPACES.name
+                        },
+                        onOpenTool = { tool ->
+                            standaloneTool = tool
                         }
                     )
                     MainTab.WORKSPACES -> when (route) {

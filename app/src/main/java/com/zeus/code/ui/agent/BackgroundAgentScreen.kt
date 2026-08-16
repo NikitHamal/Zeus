@@ -32,13 +32,17 @@ import androidx.compose.material.icons.rounded.AttachFile
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Extension
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.LinkOff
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.OpenInBrowser
+import androidx.compose.material.icons.rounded.Psychology
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Restore
+import androidx.compose.material.icons.rounded.Smartphone
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -83,7 +87,8 @@ fun BackgroundAgentScreen(
     viewModel: BackgroundAgentViewModel,
     workspaces: List<Workspace>,
     onOpenWorkspace: (Workspace) -> Unit,
-    onCloneBranch: (String, String, String?) -> Unit
+    onCloneBranch: (String, String, String?) -> Unit,
+    onOpenTool: ((String) -> Unit)? = null
 ) {
     val state by viewModel.state.collectAsState()
     when {
@@ -96,7 +101,7 @@ fun BackgroundAgentScreen(
             onOpenWorkspace = onOpenWorkspace,
             onCloneBranch = onCloneBranch
         )
-        else -> AgentDashboard(state, viewModel)
+        else -> AgentDashboard(state, viewModel, onOpenTool)
     }
 }
 
@@ -183,7 +188,11 @@ private fun defaultLlmLabel(catalog: AgentLlmCatalog?): String {
 }
 
 @Composable
-private fun AgentDashboard(state: AgentUiState, viewModel: BackgroundAgentViewModel) {
+private fun AgentDashboard(
+    state: AgentUiState,
+    viewModel: BackgroundAgentViewModel,
+    onOpenTool: ((String) -> Unit)? = null
+) {
     var projectPicker by remember { mutableStateOf(false) }
     var addProject by remember { mutableStateOf(false) }
     var accountMenu by remember { mutableStateOf(false) }
@@ -222,201 +231,215 @@ private fun AgentDashboard(state: AgentUiState, viewModel: BackgroundAgentViewMo
                     Box {
                         IconButton(onClick = { accountMenu = true }) { Icon(Icons.Rounded.MoreVert, "Agent account options") }
                         DropdownMenu(expanded = accountMenu, onDismissRequest = { accountMenu = false }) {
-                        DropdownMenuItem(
-                            text = { Text("AI providers") },
-                            onClick = { accountMenu = false; focusedPreset = null; providersDialog = true },
-                            leadingIcon = { Icon(Icons.Rounded.Tune, null) }
+                            DropdownMenuItem(
+                                text = { Text("AI providers") },
+                                onClick = { accountMenu = false; focusedPreset = null; providersDialog = true },
+                                leadingIcon = { Icon(Icons.Rounded.Tune, null) }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Disconnect NEBians") },
+                                onClick = { accountMenu = false; confirmDisconnect = true },
+                                leadingIcon = { Icon(Icons.Rounded.LinkOff, null) }
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Quick Agent Mode Launcher Bar
+            if (onOpenTool != null) {
+                item {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        AssistChip(
+                            onClick = { onOpenTool("PHONE_CONTROLLER") },
+                            label = { Text("Phone Agent") },
+                            leadingIcon = { Icon(Icons.Rounded.Smartphone, contentDescription = null, Modifier.size(16.dp)) }
                         )
-                        DropdownMenuItem(
-                            text = { Text("Disconnect NEBians") },
-                            onClick = { accountMenu = false; confirmDisconnect = true },
-                            leadingIcon = { Icon(Icons.Rounded.LinkOff, null) }
+                        AssistChip(
+                            onClick = { onOpenTool("WEB_AGENT") },
+                            label = { Text("Web Agent") },
+                            leadingIcon = { Icon(Icons.Rounded.Language, contentDescription = null, Modifier.size(16.dp)) }
+                        )
+                        AssistChip(
+                            onClick = { onOpenTool("MCP") },
+                            label = { Text("MCP Tools") },
+                            leadingIcon = { Icon(Icons.Rounded.Extension, contentDescription = null, Modifier.size(16.dp)) }
+                        )
+                        AssistChip(
+                            onClick = { onOpenTool("KNOWLEDGE") },
+                            label = { Text("Memory") },
+                            leadingIcon = { Icon(Icons.Rounded.Psychology, contentDescription = null, Modifier.size(16.dp)) }
                         )
                     }
                 }
             }
-        }
-        item {
-            ElevatedCard(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Row(
-                            Modifier.clickable(enabled = !state.busy) { projectPicker = true },
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            val project = state.selectedProject
-                            val repoShort = project?.repoFullName
-                                ?.substringAfterLast('/', project.repoFullName)
-                                .orEmpty()
-                            Text(
-                                text = repoShort.ifBlank { "Choose project" },
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                color = if (project == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface
-                            )
-                            val branch = state.selectedBranch.ifBlank {
-                                project?.preferredBaseBranch ?: project?.defaultBranch ?: ""
-                            }
-                            if (branch.isNotBlank()) {
-                                Spacer(Modifier.width(6.dp))
+
+            item {
+                ElevatedCard(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Row(
+                                Modifier.clickable(enabled = !state.busy) { projectPicker = true },
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                val project = state.selectedProject
+                                val repoShort = project?.repoFullName
+                                    ?.substringAfterLast('/', project.repoFullName)
+                                    .orEmpty()
                                 Text(
-                                    branch,
-                                    style = MaterialTheme.typography.bodySmall,
+                                    text = repoShort.ifBlank { "Choose project" },
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    color = if (project == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface
+                                )
+                                val branch = state.selectedBranch.ifBlank {
+                                    project?.preferredBaseBranch ?: project?.defaultBranch ?: ""
+                                }
+                                if (branch.isNotBlank()) {
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        branch,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                Spacer(Modifier.width(2.dp))
+                                Icon(Icons.Rounded.KeyboardArrowDown, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Spacer(Modifier.weight(1f))
+                            IconButton(onClick = { addProject = true; viewModel.loadRepositories() }, enabled = !state.busy) {
+                                Icon(Icons.Rounded.Add, "Add project")
+                            }
+                        }
+                        TextField(
+                            value = goal,
+                            onValueChange = { goal = it },
+                            placeholder = { Text("What should the agent do in this repository?") },
+                            modifier = Modifier.fillMaxWidth().height(108.dp),
+                            colors = TextFieldDefaults.colors(
+                                focusedContainerColor = Color.Transparent,
+                                unfocusedContainerColor = Color.Transparent,
+                                disabledContainerColor = Color.Transparent,
+                                focusedIndicatorColor = Color.Transparent,
+                                unfocusedIndicatorColor = Color.Transparent
+                            )
+                        )
+                        if (uploads.isNotEmpty()) {
+                            Row(
+                                Modifier.horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                uploads.forEach { upload ->
+                                    AssistChip(
+                                        onClick = { uploads = uploads.filterNot { it === upload } },
+                                        label = { Text(upload.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                        trailingIcon = { Icon(Icons.Rounded.Delete, null, Modifier.size(14.dp)) },
+                                        leadingIcon = { Icon(Icons.Rounded.AttachFile, null, Modifier.size(14.dp)) }
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.height(4.dp))
+                        }
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Surface(
+                                onClick = { filePicker.launch(arrayOf("*/*")) },
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                modifier = Modifier.size(38.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        Icons.Rounded.Add,
+                                        contentDescription = "Attach files",
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            Row(
+                                Modifier.weight(1f).clickable { modelPicker = true }.padding(vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    state.llmSelection.label.ifBlank { defaultLlmLabel(state.llmCatalog) },
+                                    style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
                                 )
-                            }
-                            Spacer(Modifier.width(2.dp))
-                            Icon(
-                                Icons.Rounded.KeyboardArrowDown,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Spacer(Modifier.weight(1f))
-                        IconButton(onClick = viewModel::refresh, modifier = Modifier.size(32.dp)) {
-                            Icon(
-                                Icons.Rounded.Cloud,
-                                contentDescription = if (state.worker.healthy) "Worker online" else "Worker unavailable",
-                                modifier = Modifier.size(20.dp),
-                                tint = if (state.worker.healthy) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error
-                            )
-                        }
-                    }
-                    Spacer(Modifier.height(4.dp))
-                    TextField(
-                        value = goal,
-                        onValueChange = { goal = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        placeholder = {
-                            Text(
-                                "What should the agent change?",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        },
-                        colors = TextFieldDefaults.colors(
-                            focusedContainerColor = Color.Transparent,
-                            unfocusedContainerColor = Color.Transparent,
-                            disabledContainerColor = Color.Transparent,
-                            focusedIndicatorColor = Color.Transparent,
-                            unfocusedIndicatorColor = Color.Transparent,
-                            disabledIndicatorColor = Color.Transparent
-                        ),
-                        textStyle = MaterialTheme.typography.bodyLarge,
-                        minLines = 2,
-                        maxLines = 6
-                    )
-                    if (uploads.isNotEmpty()) {
-                        Spacer(Modifier.height(2.dp))
-                        Row(
-                            Modifier.horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            uploads.forEach { upload ->
-                                AssistChip(
-                                    onClick = {},
-                                    label = { Text(upload.name, maxLines = 1, style = MaterialTheme.typography.labelSmall) },
-                                    leadingIcon = { Icon(Icons.Rounded.AttachFile, null, Modifier.size(14.dp)) }
-                                )
-                            }
-                        }
-                        Spacer(Modifier.height(4.dp))
-                    }
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Surface(
-                            onClick = { filePicker.launch(arrayOf("*/*")) },
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.surfaceVariant,
-                            modifier = Modifier.size(38.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
+                                Spacer(Modifier.width(2.dp))
                                 Icon(
-                                    Icons.Rounded.Add,
-                                    contentDescription = "Attach files",
-                                    modifier = Modifier.size(20.dp)
+                                    Icons.Rounded.KeyboardArrowDown,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                        }
-                        Spacer(Modifier.width(8.dp))
-                        Row(
-                            Modifier.weight(1f).clickable { modelPicker = true }.padding(vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                state.llmSelection.label.ifBlank { defaultLlmLabel(state.llmCatalog) },
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f)
-                            )
-                            Spacer(Modifier.width(2.dp))
-                            Icon(
-                                Icons.Rounded.KeyboardArrowDown,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Spacer(Modifier.width(8.dp))
-                        val canSend = state.selectedProject != null && goal.trim().length >= 10 && !state.busy
-                        Surface(
-                            onClick = {
-                                viewModel.createSession(goal, uploads) {
-                                    goal = ""
-                                    uploads = emptyList<AgentUpload>()
+                            Spacer(Modifier.width(8.dp))
+                            val canSend = state.selectedProject != null && goal.trim().length >= 10 && !state.busy
+                            Surface(
+                                onClick = {
+                                    viewModel.createSession(goal, uploads) {
+                                        goal = ""
+                                        uploads = emptyList<AgentUpload>()
+                                    }
+                                },
+                                enabled = canSend,
+                                shape = CircleShape,
+                                color = if (canSend) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                                modifier = Modifier.size(38.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        Icons.Rounded.ArrowUpward,
+                                        contentDescription = "Start task",
+                                        modifier = Modifier.size(20.dp),
+                                        tint = if (canSend) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
                                 }
-                            },
-                            enabled = canSend,
-                            shape = CircleShape,
-                            color = if (canSend) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
-                            modifier = Modifier.size(38.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    Icons.Rounded.ArrowUpward,
-                                    contentDescription = "Start task",
-                                    modifier = Modifier.size(20.dp),
-                                    tint = if (canSend) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
-                                )
                             }
                         }
                     }
                 }
             }
-        }
-        item {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(if (state.archivedMode) "Archived tasks" else "Recent tasks", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                FilterChip(selected = !state.archivedMode, onClick = { viewModel.setArchivedMode(false) }, label = { Text("Recent") })
-                Spacer(Modifier.width(6.dp))
-                FilterChip(selected = state.archivedMode, onClick = { viewModel.setArchivedMode(true) }, label = { Text("Archived") })
-            }
-        }
-        if (state.sessions.isEmpty()) {
             item {
-                OutlinedCard(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(22.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Icons.Rounded.AutoAwesome, null, Modifier.size(34.dp))
-                        Spacer(Modifier.height(10.dp))
-                        Text(if (state.archivedMode) "No archived tasks" else "No tasks yet", style = MaterialTheme.typography.titleMedium)
-                    }
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(if (state.archivedMode) "Archived tasks" else "Recent tasks", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                    FilterChip(selected = !state.archivedMode, onClick = { viewModel.setArchivedMode(false) }, label = { Text("Recent") })
+                    Spacer(Modifier.width(6.dp))
+                    FilterChip(selected = state.archivedMode, onClick = { viewModel.setArchivedMode(true) }, label = { Text("Archived") })
                 }
             }
-        } else {
-            items(state.sessions, key = { it.id }) { session ->
-                AgentSessionCard(
-                    session = session,
-                    unread = session.id in state.unreadIds,
-                    viewModel = viewModel
-                )
+            if (state.sessions.isEmpty()) {
+                item {
+                    OutlinedCard(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(22.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(Icons.Rounded.AutoAwesome, null, Modifier.size(34.dp))
+                            Spacer(Modifier.height(10.dp))
+                            Text(if (state.archivedMode) "No archived tasks" else "No tasks yet", style = MaterialTheme.typography.titleMedium)
+                        }
+                    }
+                }
+            } else {
+                items(state.sessions, key = { it.id }) { session ->
+                    AgentSessionCard(
+                        session = session,
+                        unread = session.id in state.unreadIds,
+                        viewModel = viewModel
+                    )
+                }
             }
         }
-    }
     }
 
     if (projectPicker) AgentProjectPickerDialog(

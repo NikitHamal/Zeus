@@ -1,9 +1,11 @@
 package com.zeus.code.automation
 
 import android.content.Context
+import com.zeus.code.data.AgentLlmToolParser
 import com.zeus.code.data.BackgroundAgentApi
+import com.zeus.code.data.ParsedLlmAction
 import com.zeus.code.data.SecureTokenStore
-import com.zeus.code.model.AgentChatResponse
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -12,20 +14,17 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.coroutines.withContext
+import java.util.UUID
 
 data class PhoneChatMessage(
-    val id: String = java.util.UUID.randomUUID().toString(),
-    val sender: String, // "user", "agent", "system"
+    val id: String = UUID.randomUUID().toString(),
+    val sender: String, // "user", "agent", "system", "action"
     val text: String,
-    val timestamp: Long = System.currentTimeMillis(),
-    val actionType: String? = null
+    val thought: String = "",
+    val actionType: String? = null,
+    val actionDetails: String? = null,
+    val timestamp: Long = System.currentTimeMillis()
 )
 
 class PhoneAgentRunner(
@@ -37,7 +36,6 @@ class PhoneAgentRunner(
 ) {
     private val scope = CoroutineScope(Dispatchers.IO)
     private var agentJob: Job? = null
-    private val json = Json { ignoreUnknownKeys = true }
 
     private val _isRunning = MutableStateFlow(false)
     val isRunning: StateFlow<Boolean> = _isRunning.asStateFlow()
@@ -45,11 +43,14 @@ class PhoneAgentRunner(
     private val _isPaused = MutableStateFlow(false)
     val isPaused: StateFlow<Boolean> = _isPaused.asStateFlow()
 
+    private val _currentStatus = MutableStateFlow("Ready")
+    val currentStatus: StateFlow<String> = _currentStatus.asStateFlow()
+
     private val _messages = MutableStateFlow<List<PhoneChatMessage>>(
         listOf(
             PhoneChatMessage(
                 sender = "agent",
-                text = "Hello! I am your Autonomous Phone Controller Agent. Tell me what to do on your device (e.g. 'Open Settings and check storage', 'Open TikTok and auto-scroll 5 videos', 'Open YouTube and search for Lo-Fi'). I will show a live floating overlay and execute gestures in real-time."
+                text = "Hello! I am your Autonomous Phone Controller Agent. Tell me what to do on your device (e.g. 'Open Settings and check storage', 'Open YouTube and search for Lo-Fi', 'Open Douyin / TikTok and scroll 5 videos'). I will execute gestures and navigate in real-time."
             )
         )
     )
@@ -57,13 +58,27 @@ class PhoneAgentRunner(
 
     init {
         overlayManager.onPauseClicked = {
-            val paused = !_isPaused.value
-            _isPaused.value = paused
-            overlayManager.isPaused = paused
+            togglePause()
         }
         overlayManager.onStopClicked = {
             stop()
         }
+    }
+
+    fun togglePause() {
+        val paused = !_isPaused.value
+        _isPaused.value = paused
+        overlayManager.isPaused = paused
+        _currentStatus.value = if (paused) "Paused" else "Running"
+    }
+
+    fun clearMessages() {
+        _messages.value = listOf(
+            PhoneChatMessage(
+                sender = "agent",
+                text = "Agent reset. Enter your next task whenever you're ready."
+            )
+        )
     }
 
     fun startTask(
@@ -77,7 +92,7 @@ class PhoneAgentRunner(
         if (!PhoneAutomationService.isConnected) {
             _messages.value = _messages.value + PhoneChatMessage(
                 sender = "system",
-                text = "⚠️ Accessibility Service is not enabled. Please enable 'Zeus Automation' in Settings to allow touch/swipe gestures."
+                text = "⚠️ Accessibility Service is not active. Please enable 'Zeus' under Settings > Accessibility to allow touch/swipe gestures."
             )
             phoneController.openAccessibilitySettings()
             return
@@ -86,10 +101,9 @@ class PhoneAgentRunner(
         if (!overlayManager.hasOverlayPermission()) {
             _messages.value = _messages.value + PhoneChatMessage(
                 sender = "system",
-                text = "⚠️ Display over other apps permission is required for the live floating status overlay."
+                text = "⚠️ 'Display over other apps' permission is required for the live floating status overlay."
             )
             overlayManager.requestOverlayPermission()
-            return
         }
 
         val token: String = tokenStore.read().orEmpty()
@@ -97,6 +111,7 @@ class PhoneAgentRunner(
         _isRunning.value = true
         _isPaused.value = false
         overlayManager.isPaused = false
+        _currentStatus.value = "Starting phone task..."
 
         _messages.value = _messages.value + PhoneChatMessage(
             sender = "user",
@@ -104,15 +119,16 @@ class PhoneAgentRunner(
         )
 
         agentJob = scope.launch {
-            val maxSteps = 15
+            val maxSteps = 25
+            val history = mutableListOf<String>()
+
             try {
                 overlayManager.show(1, maxSteps, "Starting task...")
                 delay(300)
 
-                // Optional: navigate home or prepare
-                overlayManager.update(1, maxSteps, "Inspecting current screen...")
-                
-                val history = mutableListOf<String>()
+                val metrics = phoneController.getDisplayMetrics()
+                val screenWidth = metrics.widthPixels
+                val screenHeight = metrics.heightPixels
 
                 for (step in 1..maxSteps) {
                     if (!_isRunning.value) break
@@ -122,144 +138,257 @@ class PhoneAgentRunner(
                         delay(500)
                     }
 
-                    overlayManager.update(step, maxSteps, "Analyzing screen nodes...")
-                    val nodes = phoneController.dumpScreenNodes()
+                    overlayManager.update(step, maxSteps, "Inspecting active screen...")
+                    _currentStatus.value = "Inspecting active screen..."
 
-                    val nodesSummary = nodes.take(40).mapIndexed { idx, n ->
-                        "[$idx] \"${n.text.ifBlank { n.contentDescription }}\" class=${n.className.substringAfterLast('.')} bounds=(${n.bounds.left},${n.bounds.top},${n.bounds.right},${n.bounds.bottom}) clickable=${n.isClickable}"
-                    }.joinToString("\n")
+                    // 1. Capture screen UI hierarchy
+                    val hierarchy = phoneController.dumpScreenHierarchy()
+                    val screenSummary = hierarchy.toPromptString(maxElements = 40)
 
+                    // 2. Build system prompt & prompt
                     val systemPrompt = """
 You are an expert Autonomous Android Phone Controller Agent.
-Your goal is to accomplish the user's task on a real Android device using accessibility gestures and UI hierarchy.
+Your mission is to accomplish the user's task on an Android mobile device using accessibility gestures, element targeting, and app navigation.
 
-Available actions (MUST return strictly valid JSON):
-1. {"action": "tap", "x": 540, "y": 960, "reason": "Click search button"}
-2. {"action": "swipe", "startX": 500, "startY": 1600, "endX": 500, "endY": 400, "reason": "Swipe up next feed"}
-3. {"action": "launch_app", "package": "com.android.settings", "reason": "Open Settings app"}
-4. {"action": "key_home", "reason": "Press Home"}
-5. {"action": "key_back", "reason": "Press Back"}
-6. {"action": "wait", "seconds": 3, "reason": "Wait for loading"}
-7. {"action": "finish", "message": "Completed task successfully!"}
+Device Screen: ${screenWidth}x${screenHeight} pixels.
 
-Current User Goal: $instruction
-Past actions: ${history.takeLast(4).joinToString("; ")}
-Current visible screen elements:
-$nodesSummary
+Available Actions (Respond with JSON or XML tool call):
+1. {"action": "tap", "x": 540, "y": 960, "reason": "Tap element"}
+2. {"action": "tap", "target": "[element_index_or_text]", "reason": "Click specific element"}
+3. {"action": "long_press", "x": 540, "y": 960, "duration_ms": 1000, "reason": "Long press"}
+4. {"action": "swipe", "startX": 540, "startY": 1500, "endX": 540, "endY": 400, "reason": "Swipe up next feed"}
+5. {"action": "scroll_down", "reason": "Scroll down"}
+6. {"action": "scroll_up", "reason": "Scroll up"}
+7. {"action": "type", "text": "Search query", "reason": "Type text into focused field"}
+8. {"action": "launch_app", "package": "com.android.settings", "reason": "Launch Settings app"}
+9. {"action": "key_home", "reason": "Press Home"}
+10. {"action": "key_back", "reason": "Press Back"}
+11. {"action": "key_recents", "reason": "Open recent apps"}
+12. {"action": "open_notifications", "reason": "Open notifications"}
+13. {"action": "wait", "seconds": 2, "reason": "Wait for loading"}
+14. {"action": "finish", "text": "Summary of what was completed"}
 
-Respond ONLY with a JSON object describing the single next action.
+Rules:
+- Choose coordinates or element indexes based on the visible screen elements list below.
+- Keep reasoning clear and concise.
+- When the goal is completed, output action "finish".
+- Output valid JSON or XML <tool name="..."> format.
 """.trimIndent()
 
-                    val response = api.chat(
+                    val prompt = """
+Current User Goal: "$instruction"
+Step: $step / $maxSteps
+
+Previous Actions:
+${if (history.isEmpty()) "None (Starting now)" else history.takeLast(5).joinToString("\n")}
+
+Current Screen State:
+$screenSummary
+
+Determine the single next action to take.
+""".trimIndent()
+
+                    overlayManager.update(step, maxSteps, "Reasoning next action...")
+                    _currentStatus.value = "Reasoning next action..."
+
+                    val response = callLlm(
                         token = token,
                         provider = provider,
                         model = model,
-                        prompt = "Determine next action for step $step to achieve: $instruction",
                         providerId = providerId,
-                        system = systemPrompt
+                        system = systemPrompt,
+                        prompt = prompt
                     )
 
-                    if (!response.ok) {
-                        _messages.value = _messages.value + PhoneChatMessage(
-                            sender = "agent",
-                            text = "❌ LLM Error: ${response.error ?: "Failed to generate action"}"
-                        )
-                        break
-                    }
-
-                    val replyText = response.reply.trim()
-                    val cleanJson = replyText.substringAfter("```json").substringAfter("```").substringBefore("```").trim()
-                    val jsonStart = cleanJson.indexOf('{')
-                    val jsonEnd = cleanJson.lastIndexOf('}')
-                    
-                    if (jsonStart == -1 || jsonEnd == -1) {
-                        overlayManager.update(step, maxSteps, "Thinking...")
-                        history.add("LLM gave non-JSON: $replyText")
+                    if (response.isBlank()) {
+                        overlayManager.update(step, maxSteps, "Waiting on model...")
                         delay(1000)
                         continue
                     }
 
-                    val jsonStr = cleanJson.substring(jsonStart, jsonEnd + 1)
-                    val actionObj = runCatching { json.parseToJsonElement(jsonStr).jsonObject }.getOrNull()
+                    // Parse action and extract thinking
+                    val parsedAction = AgentLlmToolParser.parseAction(response, defaultAction = "wait")
+                    val thought = parsedAction.thought.ifBlank { "Executing step $step" }
 
-                    if (actionObj == null) {
-                        history.add("Failed to parse action JSON: $jsonStr")
-                        continue
-                    }
+                    overlayManager.update(step, maxSteps, thought)
+                    _currentStatus.value = thought
 
-                    val actionType = actionObj["action"]?.jsonPrimitive?.contentOrNull?.lowercase() ?: "wait"
-                    val reason = actionObj["reason"]?.jsonPrimitive?.contentOrNull ?: actionType
-
-                    overlayManager.update(step, maxSteps, "Executing $reason...")
-                    history.add("Step $step: $reason")
+                    // Execute action on device
+                    val execOutcome = executeAction(parsedAction)
+                    history.add("Step $step: [${parsedAction.actionName.uppercase()}] ${parsedAction.thought} -> $execOutcome")
 
                     _messages.value = _messages.value + PhoneChatMessage(
-                        sender = "agent",
-                        text = "Step $step: $reason",
-                        actionType = actionType
+                        sender = "action",
+                        text = execOutcome,
+                        thought = parsedAction.thought,
+                        actionType = parsedAction.actionName,
+                        actionDetails = parsedAction.target.ifBlank { parsedAction.text }
                     )
 
-                    when (actionType) {
-                        "tap" -> {
-                            val x = actionObj["x"]?.jsonPrimitive?.intOrNull?.toFloat() ?: 540f
-                            val y = actionObj["y"]?.jsonPrimitive?.intOrNull?.toFloat() ?: 960f
-                            phoneController.tapCoordinates(x, y)
-                            delay(1200)
-                        }
-                        "swipe" -> {
-                            val startX = actionObj["startX"]?.jsonPrimitive?.intOrNull?.toFloat() ?: 540f
-                            val startY = actionObj["startY"]?.jsonPrimitive?.intOrNull?.toFloat() ?: 1500f
-                            val endX = actionObj["endX"]?.jsonPrimitive?.intOrNull?.toFloat() ?: 540f
-                            val endY = actionObj["endY"]?.jsonPrimitive?.intOrNull?.toFloat() ?: 400f
-                            phoneController.swipe(startX, startY, endX, endY)
-                            delay(1500)
-                        }
-                        "launch_app" -> {
-                            var pkg = actionObj["package"]?.jsonPrimitive?.contentOrNull ?: "com.android.chrome"
-                            if (pkg.equals("chrome", ignoreCase = true)) pkg = "com.android.chrome"
-                            if (pkg.equals("settings", ignoreCase = true)) pkg = "com.android.settings"
-                            if (pkg.equals("youtube", ignoreCase = true)) pkg = "com.google.android.youtube"
-                            if (pkg.equals("tiktok", ignoreCase = true) || pkg.equals("douyin", ignoreCase = true)) pkg = "com.ss.android.ugc.aweme"
-                            phoneController.launchApp(pkg)
-                            delay(2000)
-                        }
-                        "type", "input" -> {
-                            val text = actionObj["text"]?.jsonPrimitive?.contentOrNull.orEmpty()
-                            phoneController.inputText(text)
-                            delay(1200)
-                        }
-                        "key_home" -> {
-                            phoneController.pressHome()
-                            delay(1000)
-                        }
-                        "key_back" -> {
-                            phoneController.pressBack()
-                            delay(1000)
-                        }
-                        "wait" -> {
-                            val secs = actionObj["seconds"]?.jsonPrimitive?.intOrNull ?: 2
-                            delay(secs * 1000L)
-                        }
-                        "finish" -> {
-                            val msg = actionObj["message"]?.jsonPrimitive?.contentOrNull ?: "Goal accomplished."
-                            overlayManager.update(step, maxSteps, "Completed!")
-                            delay(1500)
-                            _messages.value = _messages.value + PhoneChatMessage(
-                                sender = "agent",
-                                text = "✅ $msg"
-                            )
-                            break
-                        }
+                    if (parsedAction.actionName == "finish") {
+                        val completionSummary = parsedAction.text.ifBlank { parsedAction.thought }.ifBlank { "Task successfully completed!" }
+                        overlayManager.update(step, maxSteps, "Completed!")
+                        _messages.value = _messages.value + PhoneChatMessage(
+                            sender = "agent",
+                            text = "✅ $completionSummary",
+                            thought = parsedAction.thought
+                        )
+                        delay(1200)
+                        break
                     }
+
+                    delay(800)
                 }
+            } catch (e: CancellationException) {
+                _currentStatus.value = "Stopped"
             } catch (e: Throwable) {
                 _messages.value = _messages.value + PhoneChatMessage(
-                    sender = "agent",
-                    text = "⚠️ Task interrupted: ${e.message ?: e.javaClass.simpleName}"
+                    sender = "system",
+                    text = "⚠️ Task error: ${e.message ?: e.javaClass.simpleName}"
                 )
             } finally {
                 _isRunning.value = false
+                _currentStatus.value = "Ready"
                 overlayManager.hide()
+            }
+        }
+    }
+
+    private suspend fun callLlm(
+        token: String,
+        provider: String,
+        model: String,
+        providerId: String,
+        system: String,
+        prompt: String
+    ): String {
+        return withContext(Dispatchers.IO) {
+            try {
+                if (token.isNotBlank()) {
+                    val res = api.chat(
+                        token = token,
+                        provider = provider,
+                        model = model,
+                        providerId = providerId,
+                        system = system,
+                        prompt = prompt
+                    )
+                    if (res.ok && res.reply.isNotBlank()) {
+                        res.reply
+                    } else {
+                        "{\"action\": \"wait\", \"seconds\": 1, \"thought\": \"Waiting for model output: ${res.error.orEmpty()}\"}"
+                    }
+                } else {
+                    "{\"action\": \"finish\", \"text\": \"Please connect Zeus to NEBians or configure an LLM provider to run autonomous phone tasks.\"}"
+                }
+            } catch (e: Exception) {
+                "{\"action\": \"wait\", \"seconds\": 2, \"thought\": \"Network error contacting LLM: ${e.message}\"}"
+            }
+        }
+    }
+
+    private suspend fun executeAction(action: ParsedLlmAction): String {
+        return withContext(Dispatchers.Main) {
+            when (action.actionName) {
+                "tap" -> {
+                    if (action.x != null && action.y != null) {
+                        val ok = phoneController.tapCoordinates(action.x, action.y)
+                        "Tapped at (${action.x.toInt()}, ${action.y.toInt()}) [Success: $ok]"
+                    } else if (action.target.isNotBlank()) {
+                        val idx = action.target.toIntOrNull()
+                        if (idx != null) {
+                            val ok = phoneController.clickElementByIndex(idx)
+                            "Tapped element [$idx] [Success: $ok]"
+                        } else {
+                            val ok = phoneController.clickElementByText(action.target)
+                            "Tapped text \"${action.target}\" [Success: $ok]"
+                        }
+                    } else {
+                        val metrics = phoneController.getDisplayMetrics()
+                        val cx = metrics.widthPixels * 0.5f
+                        val cy = metrics.heightPixels * 0.5f
+                        val ok = phoneController.tapCoordinates(cx, cy)
+                        "Tapped screen center [Success: $ok]"
+                    }
+                }
+                "long_press" -> {
+                    val x = action.x ?: (phoneController.getDisplayMetrics().widthPixels * 0.5f)
+                    val y = action.y ?: (phoneController.getDisplayMetrics().heightPixels * 0.5f)
+                    val dur = action.durationMs ?: 1000L
+                    val ok = phoneController.longPress(x, y, dur)
+                    "Long pressed at (${x.toInt()}, ${y.toInt()}) for ${dur}ms [Success: $ok]"
+                }
+                "swipe" -> {
+                    val metrics = phoneController.getDisplayMetrics()
+                    val sx = action.startX ?: (metrics.widthPixels * 0.5f)
+                    val sy = action.startY ?: (metrics.heightPixels * 0.75f)
+                    val ex = action.endX ?: (metrics.widthPixels * 0.5f)
+                    val ey = action.endY ?: (metrics.heightPixels * 0.25f)
+                    val dur = action.durationMs ?: 350L
+                    val ok = phoneController.swipe(sx, sy, ex, ey, dur)
+                    "Swiped from (${sx.toInt()}, ${sy.toInt()}) to (${ex.toInt()}, ${ey.toInt()}) [Success: $ok]"
+                }
+                "scroll_down" -> {
+                    val ok = phoneController.scrollDown()
+                    "Scrolled down [Success: $ok]"
+                }
+                "scroll_up" -> {
+                    val ok = phoneController.scrollUp()
+                    "Scrolled up [Success: $ok]"
+                }
+                "scroll_left" -> {
+                    val ok = phoneController.scrollLeft()
+                    "Scrolled left [Success: $ok]"
+                }
+                "scroll_right" -> {
+                    val ok = phoneController.scrollRight()
+                    "Scrolled right [Success: $ok]"
+                }
+                "type" -> {
+                    val textToType = action.text.ifBlank { action.target }
+                    val ok = phoneController.inputText(textToType)
+                    "Typed \"$textToType\" [Success: $ok]"
+                }
+                "launch_app" -> {
+                    val app = action.packageName.ifBlank { action.target }.ifBlank { action.text }
+                    val ok = phoneController.launchApp(app)
+                    "Launched app: $app [Success: $ok]"
+                }
+                "key_home" -> {
+                    val ok = phoneController.pressHome()
+                    "Pressed Home key [Success: $ok]"
+                }
+                "key_back" -> {
+                    val ok = phoneController.pressBack()
+                    "Pressed Back key [Success: $ok]"
+                }
+                "key_recents" -> {
+                    val ok = phoneController.pressRecents()
+                    "Opened Recent Apps [Success: $ok]"
+                }
+                "open_notifications" -> {
+                    val ok = phoneController.openNotifications()
+                    "Opened Notifications [Success: $ok]"
+                }
+                "open_quick_settings" -> {
+                    val ok = phoneController.openQuickSettings()
+                    "Opened Quick Settings [Success: $ok]"
+                }
+                "take_screenshot" -> {
+                    val bmp = phoneController.takeScreenshot()
+                    "Captured screenshot [Success: ${bmp != null}]"
+                }
+                "wait" -> {
+                    val waitMs = action.durationMs ?: 2000L
+                    delay(waitMs)
+                    "Waited ${waitMs / 1000}s"
+                }
+                "finish" -> {
+                    "Completed task: ${action.text}"
+                }
+                else -> {
+                    "Unknown action: ${action.actionName}"
+                }
             }
         }
     }
@@ -269,6 +398,7 @@ Respond ONLY with a JSON object describing the single next action.
         _isRunning.value = false
         _isPaused.value = false
         overlayManager.hide()
+        _currentStatus.value = "Stopped"
         _messages.value = _messages.value + PhoneChatMessage(
             sender = "system",
             text = "⏹️ Task stopped by user."

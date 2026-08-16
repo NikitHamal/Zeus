@@ -1,7 +1,9 @@
 package com.zeus.code.ui.browser
 
 import android.view.ViewGroup
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -9,7 +11,10 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.ArrowForward
+import androidx.compose.material.icons.automirrored.rounded.Send
+import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -18,17 +23,19 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.zeus.code.browser.BrowserAgentRunner
 import com.zeus.code.browser.BrowserController
 import com.zeus.code.browser.BrowserPageContent
+import com.zeus.code.browser.DomElementInfo
 import com.zeus.code.browser.WebAgentMessage
-import kotlinx.coroutines.launch
-
 import com.zeus.code.ui.agent.AgentModelPickerDialog
 import com.zeus.code.ui.agent.BackgroundAgentViewModel
+import com.zeus.code.ui.agent.MarkdownContent
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -48,11 +55,18 @@ fun WebAgentScreen(
     val currentUrl by browserController.currentUrl.collectAsState()
     val pageTitle by browserController.pageTitle.collectAsState()
     val isLoadingPage by browserController.isLoading.collectAsState()
+    val canGoBack by browserController.canGoBack.collectAsState()
+    val canGoForward by browserController.canGoForward.collectAsState()
+    val isDesktopMode by browserController.isDesktopMode.collectAsState()
 
     var inputPrompt by remember { mutableStateOf("") }
+    var addressInput by remember { mutableStateOf("") }
+    var isEditingAddress by remember { mutableStateOf(false) }
     var showModelPicker by remember { mutableStateOf(false) }
     var extractedContent by remember { mutableStateOf<BrowserPageContent?>(null) }
     var showInspectorSheet by remember { mutableStateOf(false) }
+    var elementFilterType by remember { mutableStateOf("ALL") }
+
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
 
@@ -77,6 +91,12 @@ fun WebAgentScreen(
         }
     }
 
+    LaunchedEffect(currentUrl) {
+        if (!isEditingAddress) {
+            addressInput = currentUrl
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -91,24 +111,29 @@ fun WebAgentScreen(
                             text = currentModelLabel,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.primary,
-                            maxLines = 1
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 },
                 navigationIcon = {
                     if (onBack != null) {
                         IconButton(onClick = onBack) {
-                            Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                            Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back")
                         }
                     }
                 },
                 actions = {
-                    // Unified Model Picker Button
                     AssistChip(
                         onClick = { showModelPicker = true },
                         label = { Text("Model", style = MaterialTheme.typography.labelSmall) },
-                        leadingIcon = { Icon(Icons.Default.Tune, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                        leadingIcon = { Icon(Icons.Rounded.Tune, contentDescription = null, modifier = Modifier.size(16.dp)) }
                     )
+                    if (selectedTab == 0) {
+                        IconButton(onClick = { runner.clearMessages() }) {
+                            Icon(Icons.Rounded.DeleteSweep, contentDescription = "Clear Chat")
+                        }
+                    }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
             )
@@ -120,12 +145,12 @@ fun WebAgentScreen(
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            // Clean Top Tab Selector (Chat vs Browser)
+            // Tab Selector (Chat vs Browser)
             TabRow(selectedTabIndex = selectedTab) {
                 Tab(
                     selected = selectedTab == 0,
                     onClick = { selectedTab = 0 },
-                    icon = { Icon(Icons.Default.Chat, contentDescription = null) },
+                    icon = { Icon(Icons.Rounded.Chat, contentDescription = null) },
                     text = { Text("Agent Chat") }
                 )
                 Tab(
@@ -137,7 +162,7 @@ fun WebAgentScreen(
                                 Badge(containerColor = MaterialTheme.colorScheme.primary) { Text("Active") }
                             }
                         }) {
-                            Icon(Icons.Default.Language, contentDescription = null)
+                            Icon(Icons.Rounded.Language, contentDescription = null)
                         }
                     },
                     text = { Text("Live Browser") }
@@ -147,7 +172,7 @@ fun WebAgentScreen(
             if (selectedTab == 0) {
                 // ==================== TAB 1: CHAT INTERFACE ====================
                 Column(modifier = Modifier.fillMaxSize()) {
-                    if (isRunning) {
+                    AnimatedVisibility(visible = isRunning) {
                         Surface(
                             color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
                             modifier = Modifier.fillMaxWidth()
@@ -162,8 +187,15 @@ fun WebAgentScreen(
                                     text = currentStatus,
                                     style = MaterialTheme.typography.bodySmall,
                                     fontWeight = FontWeight.Medium,
-                                    maxLines = 1
+                                    maxLines = 1,
+                                    modifier = Modifier.weight(1f)
                                 )
+                                IconButton(
+                                    onClick = { runner.stop() },
+                                    modifier = Modifier.size(28.dp)
+                                ) {
+                                    Icon(Icons.Rounded.Stop, contentDescription = "Stop", tint = MaterialTheme.colorScheme.error)
+                                }
                             }
                         }
                     }
@@ -173,29 +205,44 @@ fun WebAgentScreen(
                             modifier = Modifier
                                 .weight(1f)
                                 .fillMaxWidth()
-                                .padding(32.dp),
+                                .padding(24.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Icon(
-                                    Icons.Default.TravelExplore,
+                                    Icons.Rounded.TravelExplore,
                                     contentDescription = null,
-                                    modifier = Modifier.size(64.dp),
-                                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+                                    modifier = Modifier.size(56.dp),
+                                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
                                 )
-                                Spacer(Modifier.height(16.dp))
+                                Spacer(Modifier.height(14.dp))
                                 Text(
                                     "Autonomous Web Agent",
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold
                                 )
-                                Spacer(Modifier.height(8.dp))
+                                Spacer(Modifier.height(6.dp))
                                 Text(
-                                    "Chat with the AI model. It will inspect web pages, click elements, fill forms, and deliver answers in real-time.",
+                                    "Give your agent any web goal. It navigates sites, clicks interactive elements, submits forms, and collects answers automatically.",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     textAlign = androidx.compose.ui.text.style.TextAlign.Center
                                 )
+                                Spacer(Modifier.height(20.dp))
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    SuggestionChip(
+                                        onClick = { inputPrompt = "Search Wikipedia for Quantum Computing and summarize the main points" },
+                                        label = { Text("Quantum Computing Summary", style = MaterialTheme.typography.labelSmall) }
+                                    )
+                                    SuggestionChip(
+                                        onClick = { inputPrompt = "Search HackerNews for today's top tech news" },
+                                        label = { Text("Top HackerNews Tech News", style = MaterialTheme.typography.labelSmall) }
+                                    )
+                                    SuggestionChip(
+                                        onClick = { inputPrompt = "Search GitHub for trending Kotlin mobile projects" },
+                                        label = { Text("Trending GitHub Kotlin Repos", style = MaterialTheme.typography.labelSmall) }
+                                    )
+                                }
                             }
                         }
                     } else {
@@ -204,7 +251,7 @@ fun WebAgentScreen(
                             modifier = Modifier
                                 .weight(1f)
                                 .fillMaxWidth(),
-                            contentPadding = PaddingValues(16.dp),
+                            contentPadding = PaddingValues(14.dp),
                             verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
                             items(messages, key = { it.id }) { msg ->
@@ -215,99 +262,165 @@ fun WebAgentScreen(
 
                     // Chat Bottom Input Bar
                     Surface(
-                        tonalElevation = 6.dp,
+                        tonalElevation = 4.dp,
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                                .padding(horizontal = 14.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             OutlinedTextField(
                                 value = inputPrompt,
                                 onValueChange = { inputPrompt = it },
-                                placeholder = { Text("Ask or give a web task...") },
+                                placeholder = { Text("Ask the Web Agent to browse or search...") },
                                 modifier = Modifier.weight(1f),
-                                maxLines = 4,
-                                shape = RoundedCornerShape(24.dp)
+                                maxLines = 3,
+                                enabled = !isRunning
                             )
                             Spacer(Modifier.width(8.dp))
-                                if (!isRunning) {
-                                    FilledIconButton(
-                                        onClick = {
-                                            val p = inputPrompt.trim()
+                            if (isRunning) {
+                                IconButton(
+                                    onClick = { runner.stop() },
+                                    colors = IconButtonDefaults.filledIconButtonColors(containerColor = MaterialTheme.colorScheme.error)
+                                ) {
+                                    Icon(Icons.Rounded.Stop, contentDescription = "Stop")
+                                }
+                            } else {
+                                IconButton(
+                                    onClick = {
+                                        val text = inputPrompt.trim()
+                                        if (text.isNotBlank()) {
                                             inputPrompt = ""
                                             val sel = agentState.llmSelection
-                                            val provider = if (sel.isDefault) "motiftech" else sel.provider
-                                            val model = if (sel.isDefault) "motif-102b" else sel.model
                                             runner.startTask(
-                                                goal = p,
-                                                provider = provider,
-                                                model = model,
+                                                goal = text,
+                                                provider = if (sel.isDefault) "motiftech" else sel.provider,
+                                                model = if (sel.isDefault) "motif-102b" else sel.model,
                                                 providerId = sel.providerId
                                             )
-                                        },
-                                        enabled = inputPrompt.isNotBlank()
-                                    ) {
-                                        Icon(Icons.Default.Send, contentDescription = "Send")
-                                    }
-                                } else {
-                                    IconButton(
-                                        onClick = { runner.stop() },
-                                        colors = IconButtonDefaults.filledIconButtonColors(containerColor = MaterialTheme.colorScheme.error)
-                                    ) {
-                                        Icon(Icons.Default.Stop, contentDescription = "Stop")
-                                    }
+                                        }
+                                    },
+                                    enabled = inputPrompt.isNotBlank(),
+                                    colors = IconButtonDefaults.filledIconButtonColors(containerColor = MaterialTheme.colorScheme.primary)
+                                ) {
+                                    Icon(Icons.AutoMirrored.Rounded.Send, contentDescription = "Send")
                                 }
+                            }
                         }
                     }
                 }
             } else {
                 // ==================== TAB 2: LIVE FULL-BLEED BROWSER ====================
                 Column(modifier = Modifier.fillMaxSize()) {
-                    // Minimal Address & Action Header
+                    // Browser Top Address Bar & Toolbar
                     Surface(
                         color = MaterialTheme.colorScheme.surface,
                         tonalElevation = 2.dp,
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                Icons.Default.Lock,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp),
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Text(
-                                text = currentUrl,
-                                style = MaterialTheme.typography.bodySmall,
-                                fontFamily = FontFamily.Monospace,
-                                maxLines = 1,
-                                modifier = Modifier.weight(1f)
-                            )
-                            IconButton(
-                                onClick = {
-                                    scope.launch {
-                                        extractedContent = browserController.extractPageContent()
-                                        showInspectorSheet = true
-                                    }
-                                },
-                                modifier = Modifier.size(32.dp)
+                        Column {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(Icons.Default.FindInPage, contentDescription = "DOM Inspector", modifier = Modifier.size(18.dp))
+                                IconButton(
+                                    onClick = { scope.launch { browserController.goBack() } },
+                                    enabled = canGoBack,
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back", modifier = Modifier.size(18.dp))
+                                }
+                                IconButton(
+                                    onClick = { scope.launch { browserController.goForward() } },
+                                    enabled = canGoForward,
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(Icons.AutoMirrored.Rounded.ArrowForward, contentDescription = "Forward", modifier = Modifier.size(18.dp))
+                                }
+                                IconButton(
+                                    onClick = { scope.launch { browserController.reload() } },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(Icons.Rounded.Refresh, contentDescription = "Reload", modifier = Modifier.size(18.dp))
+                                }
+
+                                Surface(
+                                    shape = RoundedCornerShape(16.dp),
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .padding(horizontal = 4.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            Icons.Rounded.Lock,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(14.dp),
+                                            tint = MaterialTheme.colorScheme.primary
+                                        )
+                                        Spacer(Modifier.width(6.dp))
+                                        BasicTextField(
+                                            value = addressInput,
+                                            onValueChange = {
+                                                addressInput = it
+                                                isEditingAddress = true
+                                            },
+                                            singleLine = true,
+                                            textStyle = MaterialTheme.typography.bodySmall.copy(
+                                                fontFamily = FontFamily.Monospace,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            ),
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        if (isEditingAddress) {
+                                            IconButton(
+                                                onClick = {
+                                                    isEditingAddress = false
+                                                    scope.launch { browserController.navigate(addressInput) }
+                                                },
+                                                modifier = Modifier.size(24.dp)
+                                            ) {
+                                                Icon(Icons.AutoMirrored.Rounded.ArrowForward, contentDescription = "Go", modifier = Modifier.size(14.dp))
+                                            }
+                                        }
+                                    }
+                                }
+
+                                IconButton(
+                                    onClick = { browserController.toggleDesktopMode() },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        if (isDesktopMode) Icons.Rounded.DesktopMac else Icons.Rounded.PhoneAndroid,
+                                        contentDescription = "Toggle Desktop Mode",
+                                        modifier = Modifier.size(18.dp),
+                                        tint = if (isDesktopMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+
+                                IconButton(
+                                    onClick = {
+                                        scope.launch {
+                                            extractedContent = browserController.extractPageContent()
+                                            showInspectorSheet = true
+                                        }
+                                    },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(Icons.Rounded.FindInPage, contentDescription = "DOM Inspector", modifier = Modifier.size(18.dp))
+                                }
+                            }
+                            if (isLoadingPage) {
+                                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                             }
                         }
-                    }
-
-                    if (isLoadingPage) {
-                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                     }
 
                     // Full Bleed WebView
@@ -346,7 +459,8 @@ fun WebAgentScreen(
                                     Text(
                                         text = currentStatus,
                                         style = MaterialTheme.typography.labelLarge,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                        maxLines = 1
                                     )
                                 }
                             }
@@ -358,16 +472,31 @@ fun WebAgentScreen(
     }
 
     if (showInspectorSheet && extractedContent != null) {
+        val allElements = extractedContent?.elements.orEmpty()
+        val filtered = when (elementFilterType) {
+            "BUTTONS" -> allElements.filter { it.tagName == "button" || it.inputType == "button" || it.inputType == "submit" }
+            "LINKS" -> allElements.filter { it.tagName == "a" || it.href.isNotBlank() }
+            "INPUTS" -> allElements.filter { it.tagName == "input" || it.tagName == "textarea" || it.tagName == "select" }
+            else -> allElements
+        }
+
         ModalBottomSheet(onDismissRequest = { showInspectorSheet = false }) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(16.dp)
             ) {
-                Text("Interactive DOM Elements (${extractedContent?.elements?.size ?: 0})", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(12.dp))
+                Text("DOM Inspector (${allElements.size} elements)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(selected = elementFilterType == "ALL", onClick = { elementFilterType = "ALL" }, label = { Text("All (${allElements.size})") })
+                    FilterChip(selected = elementFilterType == "BUTTONS", onClick = { elementFilterType = "BUTTONS" }, label = { Text("Buttons") })
+                    FilterChip(selected = elementFilterType == "LINKS", onClick = { elementFilterType = "LINKS" }, label = { Text("Links") })
+                    FilterChip(selected = elementFilterType == "INPUTS", onClick = { elementFilterType = "INPUTS" }, label = { Text("Inputs") })
+                }
+                Spacer(Modifier.height(10.dp))
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(extractedContent?.elements ?: emptyList()) { el ->
+                    items(filtered, key = { it.zeusId.ifBlank { it.selector } }) { el ->
                         Card(modifier = Modifier.fillMaxWidth()) {
                             Row(
                                 modifier = Modifier
@@ -377,18 +506,30 @@ fun WebAgentScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
-                                    Text("<${el.tagName}> ${el.selector}", fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.labelSmall)
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Surface(
+                                            shape = RoundedCornerShape(4.dp),
+                                            color = MaterialTheme.colorScheme.primaryContainer
+                                        ) {
+                                            Text("[${el.zeusId}]", style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp))
+                                        }
+                                        Spacer(Modifier.width(6.dp))
+                                        Text("<${el.tagName}>", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
+                                    }
                                     if (el.text.isNotBlank()) Text(el.text, style = MaterialTheme.typography.bodySmall)
+                                    if (el.placeholder.isNotBlank()) Text("Placeholder: ${el.placeholder}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    if (el.href.isNotBlank()) Text("Href: ${el.href}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary, maxLines = 1)
                                 }
                                 Button(
                                     onClick = {
                                         scope.launch {
-                                            browserController.clickElement(el.selector)
+                                            browserController.clickElement(el.zeusId)
                                             showInspectorSheet = false
                                         }
-                                    }
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
                                 ) {
-                                    Text("Click")
+                                    Text("Click", style = MaterialTheme.typography.labelSmall)
                                 }
                             }
                         }
@@ -429,19 +570,46 @@ fun AgentMessageBubble(message: WebAgentMessage) {
         if (isAction) {
             Surface(
                 shape = RoundedCornerShape(8.dp),
-                color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.6f),
-                modifier = Modifier.padding(vertical = 4.dp)
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                modifier = Modifier.padding(vertical = 2.dp)
             ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(6.dp))
+                Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = MaterialTheme.colorScheme.secondaryContainer
+                        ) {
+                            Text(
+                                message.actionName.uppercase(),
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                        if (message.actionTarget.isNotBlank()) {
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                message.actionTarget,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontFamily = FontFamily.Monospace,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    if (message.thought.isNotBlank()) {
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            message.thought,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                        )
+                    }
+                    Spacer(Modifier.height(2.dp))
                     Text(
-                        text = "[${message.actionName.uppercase()}] ${message.actionTarget} → ${message.content}",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontFamily = FontFamily.Monospace
+                        message.content,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                 }
             }
@@ -463,13 +631,20 @@ fun AgentMessageBubble(message: WebAgentMessage) {
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
                         )
-                        Spacer(Modifier.height(4.dp))
+                        Spacer(Modifier.height(6.dp))
                     }
-                    Text(
-                        text = message.content,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = if (isUser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    if (isUser) {
+                        Text(
+                            text = message.content,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onPrimary
+                        )
+                    } else {
+                        MarkdownContent(
+                            markdown = message.content,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
         }

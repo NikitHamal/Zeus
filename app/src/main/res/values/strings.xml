@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">Zeus</string>
+    <string name="accessibility_service_description">Zeus Accessibility Automation Service enables autonomous agent touch, swipe, gesture, and screen inspection on your mobile device.</string>
 </resources>
