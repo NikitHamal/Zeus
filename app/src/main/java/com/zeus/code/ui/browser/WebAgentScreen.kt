@@ -10,6 +10,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
@@ -23,6 +24,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -226,7 +228,7 @@ fun WebAgentScreen(
                                     "Give your agent any web goal. It navigates sites, clicks interactive elements, submits forms, and collects answers automatically.",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                    textAlign = TextAlign.Center
                                 )
                                 Spacer(Modifier.height(20.dp))
                                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -642,7 +644,7 @@ fun AgentMessageBubble(message: WebAgentMessage) {
                     } else {
                         MarkdownContent(
                             markdown = message.content,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            textColor = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
