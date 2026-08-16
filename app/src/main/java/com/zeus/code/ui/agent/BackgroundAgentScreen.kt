@@ -197,27 +197,31 @@ private fun AgentDashboard(state: AgentUiState, viewModel: BackgroundAgentViewMo
         if (uris.isNotEmpty()) viewModel.prepareUploads(uris) { uploads = it }
     }
 
-    LazyColumn(
-        Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+    androidx.compose.material3.pulltorefresh.PullToRefreshBox(
+        isRefreshing = state.busy,
+        onRefresh = { viewModel.refresh() },
+        modifier = Modifier.fillMaxSize()
     ) {
-        item {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("Background Agent", style = MaterialTheme.typography.headlineSmall)
-                    Text(
-                        if (state.worker.healthy) "Worker online" else "Worker unavailable",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-                IconButton(onClick = viewModel::refresh) { Icon(Icons.Rounded.Refresh, "Refresh agent") }
-                Box {
-                    IconButton(onClick = { accountMenu = true }) { Icon(Icons.Rounded.MoreVert, "Agent account options") }
-                    DropdownMenu(expanded = accountMenu, onDismissRequest = { accountMenu = false }) {
+        LazyColumn(
+            Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            item {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Background Agent", style = MaterialTheme.typography.headlineSmall)
+                        Text(
+                            if (state.worker.healthy) "Worker online" else "Worker unavailable",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Box {
+                        IconButton(onClick = { accountMenu = true }) { Icon(Icons.Rounded.MoreVert, "Agent account options") }
+                        DropdownMenu(expanded = accountMenu, onDismissRequest = { accountMenu = false }) {
                         DropdownMenuItem(
                             text = { Text("AI providers") },
                             onClick = { accountMenu = false; focusedPreset = null; providersDialog = true },
@@ -412,6 +416,7 @@ private fun AgentDashboard(state: AgentUiState, viewModel: BackgroundAgentViewMo
                 )
             }
         }
+    }
     }
 
     if (projectPicker) AgentProjectPickerDialog(

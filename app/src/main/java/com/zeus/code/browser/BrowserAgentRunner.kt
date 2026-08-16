@@ -43,6 +43,10 @@ class BrowserAgentRunner(
     private val json = Json { ignoreUnknownKeys = true }
 
     val availableModels = listOf(
+        LlmModelOption("motiftech", "motif-102b", "Motif 3 (chat.motiftech.io)"),
+        LlmModelOption("motiftech", "motif-12-7b-reasoning", "Motif 12.7B Reasoning"),
+        LlmModelOption("k2think", "MBZUAI-IFM/K2-Think-v2", "K2 Think V2 (Reasoning)"),
+        LlmModelOption("poolside", "laguna-s-2.1", "Poolside Laguna S 2.1"),
         LlmModelOption("qwen", "qwen-plus", "Qwen Plus (NEBians)"),
         LlmModelOption("qwen", "qwen-max", "Qwen Max"),
         LlmModelOption("openai", "gpt-4o", "OpenAI GPT-4o"),

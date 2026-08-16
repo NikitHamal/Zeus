@@ -80,6 +80,7 @@ import com.zeus.code.ui.browser.WebAgentScreen
 import com.zeus.code.ui.automation.PhoneControllerScreen
 import com.zeus.code.ui.memory.KnowledgeBaseScreen
 import com.zeus.code.ui.mcp.McpSettingsScreen
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
@@ -400,9 +401,6 @@ private fun MainShell(state: ZeusState, viewModel: MainViewModel, agentViewModel
                         actions = {
                             IconButton(onClick = { showToolsSheet = true }) {
                                 Icon(Icons.Rounded.Apps, "Quick Tools")
-                            }
-                            if (refreshAction != null) {
-                                IconButton(onClick = refreshAction) { Icon(Icons.Rounded.Refresh, "Refresh") }
                             }
                             IconButton(onClick = { standaloneTool = "SETTINGS" }) { Icon(Icons.Rounded.Settings, "Settings") }
                         },
@@ -839,61 +837,67 @@ private fun WorkspaceListScreen(state: ZeusState, viewModel: MainViewModel, onOp
             )
         }
     ) { inner ->
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(inner),
-            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+        PullToRefreshBox(
+            isRefreshing = state.busy,
+            onRefresh = { viewModel.refreshWorkspacesList() },
+            modifier = Modifier.fillMaxSize().padding(inner)
         ) {
-            item {
-                Row(
-                    Modifier.horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    TonalChip(onClick = { importLauncher.launch(null) }, icon = Icons.Rounded.Upload, label = "Import folder")
-                    TonalChip(
-                        onClick = { importZipLauncher.launch(arrayOf("application/zip", "application/octet-stream", "application/x-zip-compressed")) },
-                        icon = Icons.Rounded.FolderOpen,
-                        label = "Import ZIP"
-                    )
-                    TonalChip(onClick = { importFilesLauncher.launch(arrayOf("*/*")) }, icon = Icons.Rounded.Description, label = "Import files")
-                    TonalChip(onClick = { cloneDialog = true }, icon = Icons.Rounded.CloudDownload, label = "Clone URL")
-                }
-            }
-            if (state.workspaces.isEmpty()) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
                 item {
-                    EmptyState(
-                        icon = Icons.Rounded.FolderOpen,
-                        title = "No workspaces yet",
-                        body = "Import a folder, files or a ZIP, clone a repository, or create a new project."
-                    )
+                    Row(
+                        Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        TonalChip(onClick = { importLauncher.launch(null) }, icon = Icons.Rounded.Upload, label = "Import folder")
+                        TonalChip(
+                            onClick = { importZipLauncher.launch(arrayOf("application/zip", "application/octet-stream", "application/x-zip-compressed")) },
+                            icon = Icons.Rounded.FolderOpen,
+                            label = "Import ZIP"
+                        )
+                        TonalChip(onClick = { importFilesLauncher.launch(arrayOf("*/*")) }, icon = Icons.Rounded.Description, label = "Import files")
+                        TonalChip(onClick = { cloneDialog = true }, icon = Icons.Rounded.CloudDownload, label = "Clone URL")
+                    }
                 }
-            } else {
-                items(state.workspaces, key = { it.path }) { workspace ->
-                    TonalCard(onClick = { onOpen(workspace) }) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            IconTile(if (workspace.gitRepository) Icons.Rounded.Source else Icons.Rounded.Folder)
-                            Spacer(Modifier.width(14.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(workspace.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(
-                                    workspace.currentBranch?.let { "Branch: $it" } ?: "Local folder",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                workspace.remoteUrl?.let {
+                if (state.workspaces.isEmpty()) {
+                    item {
+                        EmptyState(
+                            icon = Icons.Rounded.FolderOpen,
+                            title = "No workspaces yet",
+                            body = "Import a folder, files or a ZIP, clone a repository, or create a new project."
+                        )
+                    }
+                } else {
+                    items(state.workspaces, key = { it.path }) { workspace ->
+                        TonalCard(onClick = { onOpen(workspace) }) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                IconTile(if (workspace.gitRepository) Icons.Rounded.Source else Icons.Rounded.Folder)
+                                Spacer(Modifier.width(14.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(workspace.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     Text(
-                                        it,
-                                        style = MaterialTheme.typography.labelMedium,
+                                        workspace.currentBranch?.let { "Branch: $it" } ?: "Local folder",
+                                        style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
+                                    workspace.remoteUrl?.let {
+                                        Text(
+                                            it,
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
                                 }
-                            }
-                            IconButton(onClick = { deleteTarget = workspace }) {
-                                Icon(Icons.Rounded.Delete, "Delete workspace", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                IconButton(onClick = { deleteTarget = workspace }) {
+                                    Icon(Icons.Rounded.Delete, "Delete workspace", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
                             }
                         }
                     }
@@ -952,32 +956,36 @@ private fun WorkspaceDetailScreen(
     var menu by remember { mutableStateOf(false) }
     var section by rememberSaveable(workspace.path) { mutableIntStateOf(0) }
 
-    Column(Modifier.fillMaxSize()) {
-        // Standalone header (no shell chrome on this screen)
-        Row(
-            Modifier.fillMaxWidth().padding(start = 4.dp, end = 16.dp, top = 6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            IconButton(onClick = viewModel::closeWorkspace) {
-                Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back to workspaces")
+    PullToRefreshBox(
+        isRefreshing = state.busy,
+        onRefresh = { viewModel.refreshWorkspace() },
+        modifier = Modifier.fillMaxSize()
+    ) {
+        Column(Modifier.fillMaxSize()) {
+            // Standalone header (no shell chrome on this screen)
+            Row(
+                Modifier.fillMaxWidth().padding(start = 4.dp, end = 16.dp, top = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = viewModel::closeWorkspace) {
+                    Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back to workspaces")
+                }
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        workspace.name,
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        workspace.currentBranch?.let { "Branch: $it" } ?: workspace.path,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
-            Column(Modifier.weight(1f)) {
-                Text(
-                    workspace.name,
-                    style = MaterialTheme.typography.titleMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    workspace.currentBranch?.let { "Branch: $it" } ?: workspace.path,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            IconButton(onClick = viewModel::refreshWorkspace) { Icon(Icons.Rounded.Refresh, "Refresh workspace") }
-        }
         // Actions block
         Column(Modifier.padding(horizontal = 20.dp)) {
             Spacer(Modifier.height(4.dp))
@@ -1156,6 +1164,7 @@ private fun WorkspaceDetailScreen(
                 }
             }
         }
+    }
     }
 
     if (showCommit) CommitDialog(onDismiss = { showCommit = false }) {
@@ -1506,27 +1515,33 @@ private fun GitHubListScreen(state: ZeusState, viewModel: MainViewModel) {
             )
         }
     ) { inner ->
-        Column(Modifier.fillMaxSize().padding(inner)) {
-            OutlinedTextField(
-                value = state.repoQuery,
-                onValueChange = viewModel::setRepoQuery,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
-                placeholder = { Text("Search repositories") },
-                leadingIcon = { Icon(Icons.Rounded.Search, null) },
-                trailingIcon = {
-                    if (state.repoQuery.isNotBlank()) {
-                        IconButton(onClick = { viewModel.setRepoQuery("") }) { Icon(Icons.Rounded.Clear, "Clear search") }
+        PullToRefreshBox(
+            isRefreshing = state.busy,
+            onRefresh = { viewModel.refreshAccount() },
+            modifier = Modifier.fillMaxSize().padding(inner)
+        ) {
+            Column(Modifier.fillMaxSize()) {
+                OutlinedTextField(
+                    value = state.repoQuery,
+                    onValueChange = viewModel::setRepoQuery,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
+                    placeholder = { Text("Search repositories") },
+                    leadingIcon = { Icon(Icons.Rounded.Search, null) },
+                    trailingIcon = {
+                        if (state.repoQuery.isNotBlank()) {
+                            IconButton(onClick = { viewModel.setRepoQuery("") }) { Icon(Icons.Rounded.Clear, "Clear search") }
+                        }
+                    },
+                    singleLine = true,
+                    shape = MaterialTheme.shapes.extraLarge
+                )
+                LazyColumn(
+                    contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    items(state.filteredRepositories, key = { it.id }) { repo ->
+                        RepositoryCard(repo, onOpen = { viewModel.selectRepository(repo) }, onClone = { viewModel.cloneRepository(repo) })
                     }
-                },
-                singleLine = true,
-                shape = MaterialTheme.shapes.extraLarge
-            )
-            LazyColumn(
-                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                items(state.filteredRepositories, key = { it.id }) { repo ->
-                    RepositoryCard(repo, onOpen = { viewModel.selectRepository(repo) }, onClone = { viewModel.cloneRepository(repo) })
                 }
             }
         }
@@ -1551,28 +1566,32 @@ private fun RepositoryDetailScreen(state: ZeusState, viewModel: MainViewModel, r
     var reviewPull by remember { mutableStateOf<PullRequest?>(null) }
     val uriHandler = LocalUriHandler.current
 
-    Column(Modifier.fillMaxSize()) {
-        // Standalone header (no shell chrome on this screen)
-        Row(
-            Modifier.fillMaxWidth().padding(start = 4.dp, end = 16.dp, top = 6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            IconButton(onClick = viewModel::closeRepository) {
-                Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back to repositories")
+    PullToRefreshBox(
+        isRefreshing = state.busy,
+        onRefresh = { viewModel.refreshSelectedRepository() },
+        modifier = Modifier.fillMaxSize()
+    ) {
+        Column(Modifier.fillMaxSize()) {
+            // Standalone header (no shell chrome on this screen)
+            Row(
+                Modifier.fillMaxWidth().padding(start = 4.dp, end = 16.dp, top = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = viewModel::closeRepository) {
+                    Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back to repositories")
+                }
+                Column(Modifier.weight(1f)) {
+                    Text(repo.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        repo.owner.login,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
-            Column(Modifier.weight(1f)) {
-                Text(repo.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(
-                    repo.owner.login,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            IconButton(onClick = viewModel::refreshSelectedRepository) { Icon(Icons.Rounded.Refresh, "Refresh repository") }
-        }
-        Column(Modifier.padding(horizontal = 20.dp)) {
+            Column(Modifier.padding(horizontal = 20.dp)) {
             Spacer(Modifier.height(2.dp))
             Text(
                 repo.description ?: "No description",
@@ -1693,6 +1712,7 @@ private fun RepositoryDetailScreen(state: ZeusState, viewModel: MainViewModel, r
             }
             3 -> ActionsTabContent(state, viewModel)
         }
+    }
     }
 
     if (deleteConfirm) ConfirmDialog(

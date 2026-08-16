@@ -580,7 +580,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun task(label: String?, block: suspend () -> Unit) {
         viewModelScope.launch {
-            if (label != null) _state.update { it.copy(busy = true, message = label) }
+            _state.update { it.copy(busy = true, message = label ?: it.message) }
             try {
                 block()
             } catch (cancelled: CancellationException) {
