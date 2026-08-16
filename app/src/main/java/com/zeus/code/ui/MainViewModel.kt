@@ -25,6 +25,9 @@ import com.zeus.code.model.RunJob
 import com.zeus.code.model.WorkflowRun
 import com.zeus.code.model.Workspace
 import com.zeus.code.ui.theme.ZeusThemeMode
+import com.zeus.code.mcp.McpManager
+import com.zeus.code.browser.BrowserController
+import com.zeus.code.memory.MemoryManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -75,6 +78,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val workspaces = WorkspaceManager(application, git)
     private val terminal = TerminalEngine(git)
     private val settings = application.getSharedPreferences("zeus_settings", Context.MODE_PRIVATE)
+
+    val mcpManager = McpManager(application)
+    val browserController = BrowserController(application)
+    val browserAgentRunner = com.zeus.code.browser.BrowserAgentRunner(application, browserController)
+    val memoryManager = MemoryManager(application)
 
     private val _state = MutableStateFlow(ZeusState())
     val state: StateFlow<ZeusState> = _state.asStateFlow()

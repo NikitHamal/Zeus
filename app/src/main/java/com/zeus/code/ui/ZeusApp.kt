@@ -71,6 +71,12 @@ import androidx.compose.material.icons.rounded.Source
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material.icons.rounded.Upload
+import androidx.compose.material.icons.rounded.Language
+import androidx.compose.material.icons.rounded.Psychology
+import androidx.compose.material.icons.rounded.Extension
+import com.zeus.code.ui.browser.BrowserAgentScreen
+import com.zeus.code.ui.memory.KnowledgeBaseScreen
+import com.zeus.code.ui.mcp.McpSettingsScreen
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
@@ -512,6 +518,16 @@ private fun MainShell(state: ZeusState, viewModel: MainViewModel, agentViewModel
                     } else {
                         RepositoryDetailScreen(state, viewModel, state.selectedRepo!!)
                     }
+                    MainTab.BROWSER -> BrowserAgentScreen(
+                        browserController = viewModel.browserController,
+                        runner = viewModel.browserAgentRunner
+                    )
+                    MainTab.KNOWLEDGE -> KnowledgeBaseScreen(
+                        memoryManager = viewModel.memoryManager
+                    )
+                    MainTab.MCP -> McpSettingsScreen(
+                        mcpManager = viewModel.mcpManager
+                    )
                 }
             }
         }
@@ -2556,6 +2572,9 @@ private fun tabTitle(tab: MainTab) = when (tab) {
     MainTab.AGENT -> "Agent"
     MainTab.WORKSPACES -> "Workspaces"
     MainTab.GITHUB -> "GitHub"
+    MainTab.BROWSER -> "Browser"
+    MainTab.KNOWLEDGE -> "Memory"
+    MainTab.MCP -> "MCP"
 }
 
 private fun tabIcon(tab: MainTab) = when (tab) {
@@ -2563,6 +2582,9 @@ private fun tabIcon(tab: MainTab) = when (tab) {
     MainTab.AGENT -> Icons.Rounded.AutoAwesome
     MainTab.WORKSPACES -> Icons.Rounded.Folder
     MainTab.GITHUB -> Icons.Rounded.Source
+    MainTab.BROWSER -> Icons.Rounded.Language
+    MainTab.KNOWLEDGE -> Icons.Rounded.Psychology
+    MainTab.MCP -> Icons.Rounded.Extension
 }
 
 private fun formatSize(bytes: Long): String = when {

@@ -381,3 +381,33 @@ data class AgentUpload(
     val contentType: String,
     val bytes: ByteArray
 )
+
+@Serializable
+data class AgentKnowledgeItemDto(
+    val id: String = "",
+    val title: String = "",
+    val content: String = "",
+    val type: String = "CODING_RULE",
+    val tags: List<String> = emptyList(),
+    val repository: String = "",
+    val createdAt: Long = 0L,
+    val updatedAt: Long = 0L
+)
+
+@Serializable
+data class AgentKnowledgeListResponse(
+    val ok: Boolean = false,
+    val items: List<AgentKnowledgeItemDto> = emptyList(),
+    val count: Int = 0,
+    val error: String? = null,
+    val code: String? = null
+)
+
+@Serializable
+data class AgentKnowledgeItemResponse(
+    val ok: Boolean = false,
+    val item: AgentKnowledgeItemDto = AgentKnowledgeItemDto(),
+    val error: String? = null,
+    val code: String? = null
+)
+

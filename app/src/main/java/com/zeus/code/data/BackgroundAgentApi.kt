@@ -14,6 +14,8 @@ import com.zeus.code.model.AgentSessionResponse
 import com.zeus.code.model.AgentSimpleResponse
 import com.zeus.code.model.AgentStateResponse
 import com.zeus.code.model.AgentTokenResponse
+import com.zeus.code.model.AgentKnowledgeItemResponse
+import com.zeus.code.model.AgentKnowledgeListResponse
 import com.zeus.code.model.AgentUpload
 import java.io.OutputStream
 import java.net.URI
@@ -206,6 +208,36 @@ class BackgroundAgentApi(context: Context) {
 
     suspend fun deleteSession(token: String, id: String): AgentSimpleResponse = request(
         Request.Builder().url(url("/sessions/$id/lifecycle/")).delete().authorized(token).build()
+    )
+
+    // ------------------------------------------------------------------
+    // Knowledge Base / Long-Term Memory (Server-side)
+    // ------------------------------------------------------------------
+
+    suspend fun listKnowledge(token: String, query: String = "", repository: String = ""): AgentKnowledgeListResponse =
+        get("/knowledge/?q=${encode(query)}&repo=${encode(repository)}", token)
+
+    suspend fun saveKnowledge(
+        token: String,
+        title: String,
+        content: String,
+        type: String = "CODING_RULE",
+        repository: String = "",
+        tags: List<String> = emptyList()
+    ): AgentKnowledgeItemResponse = postJson(
+        path = "/knowledge/",
+        body = buildJsonObject {
+            put("title", title)
+            put("content", content)
+            put("type", type)
+            put("repository", repository)
+            put("tags", kotlinx.serialization.json.JsonArray(tags.map { kotlinx.serialization.json.JsonPrimitive(it) }))
+        }.toString(),
+        token = token
+    )
+
+    suspend fun deleteKnowledge(token: String, itemId: String): AgentSimpleResponse = request(
+        Request.Builder().url(url("/knowledge/$itemId/")).delete().authorized(token).build()
     )
 
     suspend fun download(token: String, downloadUrl: String, output: OutputStream): Long = withContext(Dispatchers.IO) {

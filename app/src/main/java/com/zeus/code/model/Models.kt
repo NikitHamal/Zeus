@@ -231,4 +231,4 @@ data class ArtifactsResponse(
     val artifacts: List<ActionArtifact> = emptyList()
 )
 
-enum class MainTab { HOME, AGENT, WORKSPACES, GITHUB }
+enum class MainTab { HOME, AGENT, WORKSPACES, GITHUB, BROWSER, KNOWLEDGE, MCP }
