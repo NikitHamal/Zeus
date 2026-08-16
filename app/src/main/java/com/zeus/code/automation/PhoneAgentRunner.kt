@@ -2,6 +2,7 @@ package com.zeus.code.automation
 
 import android.content.Context
 import com.zeus.code.data.AgentLlmToolParser
+import com.zeus.code.data.AgentPlanItem
 import com.zeus.code.data.BackgroundAgentApi
 import com.zeus.code.data.BackgroundAgentApiException
 import com.zeus.code.data.ParsedLlmAction
@@ -126,28 +127,37 @@ class PhoneAgentRunner(
         )
 
         agentJob = scope.launch {
-            val maxSteps = 25
+            val maxSafetyIterations = 35
             val history = mutableListOf<String>()
             var previousPackage = ""
             var previousActivity = ""
+            var activePlan = listOf<AgentPlanItem>()
 
             try {
-                overlayManager.show(1, maxSteps, "Starting task...")
+                overlayManager.show("Step 1", "Starting task...")
                 delay(300)
 
                 val metrics = phoneController.getDisplayMetrics()
                 val screenWidth = metrics.widthPixels
                 val screenHeight = metrics.heightPixels
 
-                for (step in 1..maxSteps) {
+                for (step in 1..maxSafetyIterations) {
                     if (!_isRunning.value) break
 
+                    val stepTitle = if (activePlan.isNotEmpty()) {
+                        val done = activePlan.count { it.isCompleted }
+                        val total = activePlan.size
+                        "Plan $done/$total · Step $step"
+                    } else {
+                        "Step $step"
+                    }
+
                     while (_isPaused.value) {
-                        overlayManager.update(step, maxSteps, "Paused")
+                        overlayManager.update(stepTitle, "Paused")
                         delay(500)
                     }
 
-                    overlayManager.update(step, maxSteps, "Inspecting active screen...")
+                    overlayManager.update(stepTitle, "Inspecting active screen...")
                     _currentStatus.value = "Inspecting active screen..."
 
                     // 1. Capture screen UI hierarchy
@@ -192,6 +202,8 @@ Available Actions (Respond with JSON or XML tool call):
 16. {"action": "take_over", "reason": "Ask human user to solve biometric / OTP / CAPTCHA"}
 17. {"action": "finish", "text": "Summary of what was accomplished"}
 
+Optional: You can include "plan": [{"content": "step description", "status": "pending|in_progress|completed"}] to update your dynamic plan.
+
 Rules:
 - Target elements using the [index] identifier or direct visible label from the screen elements list.
 - When typing into search inputs, set "submit": true to automatically trigger search.
@@ -199,10 +211,16 @@ Rules:
 - Always output valid JSON or XML format.
 """.trimIndent()
 
+                    val planSection = if (activePlan.isNotEmpty()) {
+                        "\nActive Plan:\n" + activePlan.joinToString("\n") {
+                            "- [${if (it.isCompleted) "x" else if (it.isInProgress) ">" else " "}] ${it.title}"
+                        } + "\n"
+                    } else ""
+
                     val prompt = """
 Current User Goal: "$instruction"
-Step: $step / $maxSteps
-${if (screenTransitionNote.isNotBlank()) "\nState Notice: $screenTransitionNote\n" else ""}
+Step: $step
+$planSection${if (screenTransitionNote.isNotBlank()) "\nState Notice: $screenTransitionNote\n" else ""}
 Previous Actions:
 ${if (history.isEmpty()) "None (Starting now)" else history.takeLast(5).joinToString("\n")}
 
@@ -213,7 +231,7 @@ Determine the single next action to take.
 """.trimIndent()
 
                     val activeModelLabel = model.ifBlank { if (provider.isNotBlank()) provider else "Qwen 3.8 Max" }
-                    overlayManager.update(step, maxSteps, "Reasoning with $activeModelLabel...")
+                    overlayManager.update(stepTitle, "Reasoning with $activeModelLabel...")
                     _currentStatus.value = "Reasoning with $activeModelLabel..."
 
                     val response = callLlm(
@@ -229,11 +247,14 @@ Determine the single next action to take.
                         break
                     }
 
-                    // Parse action and extract thinking
+                    // Parse action and extract thinking & plan
                     val parsedAction = AgentLlmToolParser.parseAction(response, defaultAction = "wait")
-                    val thought = parsedAction.thought.ifBlank { "Executing step $step" }
+                    if (parsedAction.planItems.isNotEmpty()) {
+                        activePlan = parsedAction.planItems
+                    }
 
-                    overlayManager.update(step, maxSteps, thought)
+                    val thought = parsedAction.thought.ifBlank { "Executing step $step" }
+                    overlayManager.update(stepTitle, thought)
                     _currentStatus.value = thought
 
                     // Execute action on device
@@ -250,18 +271,18 @@ Determine the single next action to take.
 
                     if (parsedAction.actionName == "finish") {
                         val completionSummary = parsedAction.text.ifBlank { parsedAction.thought }.ifBlank { "Task successfully completed!" }
-                        overlayManager.update(step, maxSteps, "Completed!")
+                        overlayManager.update("Completed ✅", completionSummary)
                         _messages.value = _messages.value + PhoneChatMessage(
                             sender = "agent",
                             text = "✅ $completionSummary",
                             thought = parsedAction.thought
                         )
-                        delay(1200)
+                        delay(1500)
                         break
                     }
 
                     if (parsedAction.actionName == "take_over") {
-                        overlayManager.update(step, maxSteps, "User takeover needed")
+                        overlayManager.update("Takeover Needed ✋", "User action required")
                         _messages.value = _messages.value + PhoneChatMessage(
                             sender = "agent",
                             text = "✋ User takeover required: ${parsedAction.text.ifBlank { parsedAction.thought }}",

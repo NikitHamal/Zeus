@@ -2,6 +2,7 @@ package com.zeus.code.browser
 
 import android.content.Context
 import com.zeus.code.data.AgentLlmToolParser
+import com.zeus.code.data.AgentPlanItem
 import com.zeus.code.data.BackgroundAgentApi
 import com.zeus.code.data.BackgroundAgentApiException
 import com.zeus.code.data.ParsedLlmAction
@@ -105,10 +106,11 @@ class BrowserAgentRunner(
         providerId: String
     ) = withContext(Dispatchers.IO) {
         val token = tokenStore.read().orEmpty()
-        val maxIterations = 20
+        val maxSafetyIterations = 35
         val history = mutableListOf<String>()
+        var activePlan = listOf<AgentPlanItem>()
 
-        for (iteration in 1..maxIterations) {
+        for (iteration in 1..maxSafetyIterations) {
             if (!_isRunning.value) break
 
             _currentStatus.value = "Inspecting page DOM..."
@@ -137,16 +139,24 @@ Available Actions (Respond with JSON or XML tool call):
 9. {"action": "wait", "seconds": 2, "reason": "Wait for page update"}
 10. {"action": "done", "text": "Final answer or summary of findings"}
 
+Optional: You can include "plan": [{"content": "step description", "status": "pending|in_progress|completed"}] to track dynamic sub-goals.
+
 Rules:
 - Target elements using the [z-X] identifier from the interactive elements list.
 - When you have answered or completed the goal, use action "done" with your complete findings in "text".
 - Output valid JSON or XML <tool name="..."> format.
 """.trimIndent()
 
+            val planSection = if (activePlan.isNotEmpty()) {
+                "\nActive Plan:\n" + activePlan.joinToString("\n") {
+                    "- [${if (it.isCompleted) "x" else if (it.isInProgress) ">" else " "}] ${it.title}"
+                } + "\n"
+            } else ""
+
             val prompt = """
 User Goal: "$goal"
-Step: $iteration / $maxIterations
-
+Step: $iteration
+$planSection
 Previous Steps:
 ${if (history.isEmpty()) "None (Starting)" else history.takeLast(5).joinToString("\n")}
 
@@ -173,8 +183,11 @@ Determine the single next action.
 
             // Parse response
             val parsedAction = AgentLlmToolParser.parseAction(rawResponse, defaultAction = "extract")
-            val thought = parsedAction.thought.ifBlank { "Executing ${parsedAction.actionName}" }
+            if (parsedAction.planItems.isNotEmpty()) {
+                activePlan = parsedAction.planItems
+            }
 
+            val thought = parsedAction.thought.ifBlank { "Executing ${parsedAction.actionName}" }
             _currentStatus.value = thought
 
             if (parsedAction.actionName == "done" || parsedAction.actionName == "finish") {

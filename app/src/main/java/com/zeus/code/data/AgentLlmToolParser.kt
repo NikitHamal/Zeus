@@ -3,6 +3,12 @@ package com.zeus.code.data
 import org.json.JSONArray
 import org.json.JSONObject
 
+data class AgentPlanItem(
+    val title: String,
+    val isCompleted: Boolean = false,
+    val isInProgress: Boolean = false
+)
+
 /**
  * Universal Tool & Action Parser for Reverse-Engineered Web Chat AI LLMs
  * and Structured JSON/XML Tool Calling Providers.
@@ -11,8 +17,8 @@ import org.json.JSONObject
  * often produce reasoning inside `<think>...</think>`, markdown code blocks (```json ... ```),
  * XML `<tool name="...">...</tool>` markup, or plain text with embedded JSON objects.
  *
- * This parser extracts thoughts, normalizes parameters, and converts any tool call
- * format into a consistent [ParsedLlmAction].
+ * This parser extracts thoughts, normalizes parameters, extracts dynamic plans,
+ * and converts any tool call format into a consistent [ParsedLlmAction].
  */
 data class ParsedLlmAction(
     val actionName: String,
@@ -27,6 +33,7 @@ data class ParsedLlmAction(
     val endY: Float? = null,
     val durationMs: Long? = null,
     val packageName: String = "",
+    val planItems: List<AgentPlanItem> = emptyList(),
     val rawParameters: Map<String, String> = emptyMap(),
     val rawJson: String = ""
 )
@@ -340,7 +347,29 @@ object AgentLlmToolParser {
                 .ifBlank { obj.optString("command") }
         ).trim()
 
-        return buildActionFromMap(actionName, params, defaultThought, obj.toString())
+        val planItems = mutableListOf<AgentPlanItem>()
+        val planArray = obj.optJSONArray("plan") ?: obj.optJSONArray("todos") ?: obj.optJSONArray("steps")
+        if (planArray != null) {
+            for (i in 0 until planArray.length()) {
+                val item = planArray.opt(i)
+                if (item is JSONObject) {
+                    val content = item.optString("content").ifBlank { item.optString("title") }.ifBlank { item.optString("task") }
+                    val status = item.optString("status", "pending")
+                    if (content.isNotBlank()) {
+                        planItems.add(AgentPlanItem(
+                            title = content,
+                            isCompleted = status.equals("completed", ignoreCase = true) || status.equals("done", ignoreCase = true),
+                            isInProgress = status.equals("in_progress", ignoreCase = true) || status.equals("running", ignoreCase = true)
+                        ))
+                    }
+                } else if (item is String && item.isNotBlank()) {
+                    planItems.add(AgentPlanItem(title = item))
+                }
+            }
+        }
+
+        val baseAction = buildActionFromMap(actionName, params, defaultThought, obj.toString())
+        return baseAction.copy(planItems = planItems)
     }
 
     private fun buildActionFromMap(
@@ -428,6 +457,7 @@ object AgentLlmToolParser {
         val lower = name.trim().lowercase().replace('-', '_').replace(' ', '_')
         return when (lower) {
             "tap", "click", "touch", "press", "click_element", "tap_coordinates" -> "tap"
+            "double_tap", "doubletap", "double_click" -> "double_tap"
             "long_press", "longpress", "press_and_hold", "hold" -> "long_press"
             "swipe", "drag", "slide" -> "swipe"
             "scroll_down", "scrolldown", "down" -> "scroll_down"
@@ -437,6 +467,7 @@ object AgentLlmToolParser {
             "scroll" -> "scroll"
             "type", "input", "set_text", "send_keys", "write", "enter_text" -> "type"
             "launch_app", "launch", "open_app", "open", "start_app" -> "launch_app"
+            "open_url", "goto_url", "url" -> "open_url"
             "home", "key_home", "press_home", "go_home" -> "key_home"
             "back", "key_back", "press_back", "go_back" -> "key_back"
             "recents", "key_recents", "overview", "app_switch" -> "key_recents"
@@ -444,8 +475,9 @@ object AgentLlmToolParser {
             "quick_settings", "open_quick_settings" -> "open_quick_settings"
             "screenshot", "capture_screenshot", "take_screenshot" -> "take_screenshot"
             "wait", "sleep", "delay", "pause" -> "wait"
+            "take_over", "takeover", "manual_intervention" -> "take_over"
             "finish", "done", "complete", "stop", "success" -> "finish"
-            "navigate", "goto", "open_url", "visit" -> "navigate"
+            "navigate", "goto", "visit" -> "navigate"
             "select", "choose_option", "dropdown" -> "select"
             "extract", "extract_content", "read_page", "get_content" -> "extract"
             "eval_script", "evaluate_js", "javascript", "exec_js" -> "eval_script"
