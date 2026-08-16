@@ -97,6 +97,19 @@ class KnowledgeDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         return items
     }
 
+    fun getByRepository(repository: String): List<KnowledgeItem> {
+        if (repository.isBlank()) return getAll()
+        val db = readableDatabase
+        val cursor = db.query(TABLE_ITEMS, null, "$COL_REPO = ? OR $COL_REPO = ''", arrayOf(repository), null, null, "$COL_UPDATED_AT DESC")
+        val items = mutableListOf<KnowledgeItem>()
+        cursor.use {
+            while (it.moveToNext()) {
+                items.add(mapCursor(it))
+            }
+        }
+        return items
+    }
+
     fun search(query: String): List<KnowledgeItem> {
         if (query.isBlank()) return getAll()
         val db = readableDatabase
@@ -116,6 +129,12 @@ class KnowledgeDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             }
         }
         return items
+    }
+
+    fun searchByRepository(query: String, repository: String): List<KnowledgeItem> {
+        if (query.isBlank()) return getByRepository(repository)
+        val allMatches = search(query)
+        return allMatches.filter { it.repository.isBlank() || it.repository.equals(repository, ignoreCase = true) }
     }
 
     private fun mapCursor(cursor: android.database.Cursor): KnowledgeItem {

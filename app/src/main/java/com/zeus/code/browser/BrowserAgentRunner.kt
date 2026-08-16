@@ -3,6 +3,7 @@ package com.zeus.code.browser
 import android.content.Context
 import com.zeus.code.data.BackgroundAgentApi
 import com.zeus.code.data.SecureTokenStore
+import java.util.UUID
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -15,13 +16,20 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
-data class BrowserAgentStep(
-    val iteration: Int,
-    val thought: String,
-    val actionName: String,
-    val actionTarget: String,
-    val result: String,
+data class WebAgentMessage(
+    val id: String = UUID.randomUUID().toString(),
+    val role: String, // "user", "assistant", "action"
+    val content: String,
+    val thought: String = "",
+    val actionName: String = "",
+    val actionTarget: String = "",
     val timestamp: Long = System.currentTimeMillis()
+)
+
+data class LlmModelOption(
+    val provider: String,
+    val model: String,
+    val label: String
 )
 
 class BrowserAgentRunner(
@@ -34,131 +42,166 @@ class BrowserAgentRunner(
     private var agentJob: Job? = null
     private val json = Json { ignoreUnknownKeys = true }
 
+    val availableModels = listOf(
+        LlmModelOption("qwen", "qwen-plus", "Qwen Plus (NEBians)"),
+        LlmModelOption("qwen", "qwen-max", "Qwen Max"),
+        LlmModelOption("openai", "gpt-4o", "OpenAI GPT-4o"),
+        LlmModelOption("openai", "gpt-4o-mini", "OpenAI GPT-4o Mini"),
+        LlmModelOption("gemini", "gemini-2.5-flash", "Google Gemini 2.5 Flash"),
+        LlmModelOption("gemini", "gemini-2.5-pro", "Google Gemini 2.5 Pro"),
+        LlmModelOption("anthropic", "claude-3-5-sonnet-20241022", "Claude 3.5 Sonnet"),
+        LlmModelOption("deepseek", "deepseek-coder", "DeepSeek Coder")
+    )
+
+    private val _selectedModel = MutableStateFlow(availableModels[0])
+    val selectedModel: StateFlow<LlmModelOption> = _selectedModel.asStateFlow()
+
     private val _isRunning = MutableStateFlow(false)
     val isRunning: StateFlow<Boolean> = _isRunning.asStateFlow()
 
-    private val _currentGoal = MutableStateFlow("")
-    val currentGoal: StateFlow<String> = _currentGoal.asStateFlow()
+    private val _messages = MutableStateFlow<List<WebAgentMessage>>(emptyList())
+    val messages: StateFlow<List<WebAgentMessage>> = _messages.asStateFlow()
 
-    private val _steps = MutableStateFlow<List<BrowserAgentStep>>(emptyList())
-    val steps: StateFlow<List<BrowserAgentStep>> = _steps.asStateFlow()
+    private val _currentStatus = MutableStateFlow("Ready")
+    val currentStatus: StateFlow<String> = _currentStatus.asStateFlow()
 
-    private val _statusText = MutableStateFlow("Idle")
-    val statusText: StateFlow<String> = _statusText.asStateFlow()
+    fun selectModel(option: LlmModelOption) {
+        _selectedModel.value = option
+    }
 
-    fun startTask(goal: String, maxSteps: Int = 15) {
-        if (goal.isBlank() || _isRunning.value) return
-        _currentGoal.value = goal
-        _steps.value = emptyList()
+    fun sendMessage(userPrompt: String) {
+        if (userPrompt.isBlank() || _isRunning.value) return
+        val userMsg = WebAgentMessage(role = "user", content = userPrompt.trim())
+        _messages.value = _messages.value + userMsg
         _isRunning.value = true
-        _statusText.value = "Starting autonomous browser agent..."
 
         agentJob = scope.launch {
             try {
-                runLoop(goal, maxSteps)
+                runAutonomousLoop(userPrompt)
             } catch (e: Exception) {
-                _statusText.value = "Agent error: ${e.message}"
+                _currentStatus.value = "Error: ${e.message}"
+                _messages.value = _messages.value + WebAgentMessage(
+                    role = "assistant",
+                    content = "Task encountered an error: ${e.message}"
+                )
             } finally {
                 _isRunning.value = false
+                _currentStatus.value = "Ready"
             }
         }
     }
 
-    fun stopTask() {
+    fun stop() {
         agentJob?.cancel()
         _isRunning.value = false
-        _statusText.value = "Stopped by user"
+        _currentStatus.value = "Stopped"
+        _messages.value = _messages.value + WebAgentMessage(
+            role = "assistant",
+            content = "Execution stopped by user."
+        )
     }
 
-    private suspend fun runLoop(goal: String, maxSteps: Int) = withContext(Dispatchers.IO) {
+    private suspend fun runAutonomousLoop(goal: String) = withContext(Dispatchers.IO) {
         val token = tokenStore.read()
-        for (stepNum in 1..maxSteps) {
+        val currentModel = _selectedModel.value
+        val maxIterations = 20
+
+        for (iteration in 1..maxIterations) {
             if (!_isRunning.value) break
-            _statusText.value = "Step $stepNum/$maxSteps: Reading page DOM..."
+            _currentStatus.value = "Inspecting page..."
 
             val pageContent = browserController.extractPageContent()
-            val prompt = buildAgentPrompt(goal, pageContent, _steps.value)
+            val prompt = buildPrompt(goal, pageContent, _messages.value)
 
-            _statusText.value = "Step $stepNum/$maxSteps: Reasoning with cloud model..."
-            val modelResponse = callCloudModel(prompt, token)
+            _currentStatus.value = "Reasoning with ${currentModel.label}..."
+            val rawResponse = callModel(prompt, currentModel, token)
 
-            val parsedAction = parseModelAction(modelResponse)
-            _statusText.value = "Step $stepNum/$maxSteps: Executing ${parsedAction.name} on device..."
+            val parsed = parseAction(rawResponse)
 
-            val stepResult = executeOnDeviceAction(parsedAction)
+            if (parsed.thought.isNotBlank()) {
+                _currentStatus.value = parsed.thought
+            }
 
-            val stepRecord = BrowserAgentStep(
-                iteration = stepNum,
-                thought = parsedAction.thought,
-                actionName = parsedAction.name,
-                actionTarget = parsedAction.target,
-                result = stepResult
-            )
-            _steps.value = _steps.value + stepRecord
-
-            if (parsedAction.name.equals("done", ignoreCase = true) || parsedAction.name.equals("finish", ignoreCase = true)) {
-                _statusText.value = "Goal Accomplished: ${parsedAction.thought}"
+            if (parsed.name.equals("done", ignoreCase = true) || parsed.name.equals("finish", ignoreCase = true)) {
+                _messages.value = _messages.value + WebAgentMessage(
+                    role = "assistant",
+                    content = if (parsed.target.isNotBlank()) parsed.target else parsed.thought,
+                    thought = parsed.thought
+                )
                 break
             }
+
+            _currentStatus.value = "Executing ${parsed.name} on device..."
+            val actionResult = executeAction(parsed)
+
+            _messages.value = _messages.value + WebAgentMessage(
+                role = "action",
+                content = actionResult,
+                thought = parsed.thought,
+                actionName = parsed.name,
+                actionTarget = parsed.target
+            )
         }
     }
 
-    private fun buildAgentPrompt(goal: String, page: BrowserPageContent, pastSteps: List<BrowserAgentStep>): String {
-        val elementsText = page.elements.take(40).joinToString("\n") { el ->
+    private fun buildPrompt(goal: String, page: BrowserPageContent, history: List<WebAgentMessage>): String {
+        val elements = page.elements.take(35).joinToString("\n") { el ->
             "- [${el.tagName}] selector: `${el.selector}` | text: \"${el.text}\" ${if (el.href.isNotBlank()) "(href: ${el.href})" else ""}"
         }
 
-        val historyText = if (pastSteps.isNotEmpty()) {
-            pastSteps.joinToString("\n") { s ->
-                "Step ${s.iteration}: Action: ${s.actionName} (${s.actionTarget}) -> Result: ${s.result}"
+        val recentHistory = history.takeLast(6).joinToString("\n") { m ->
+            when (m.role) {
+                "user" -> "User: ${m.content}"
+                "action" -> "Action: ${m.actionName} (${m.actionTarget}) -> Result: ${m.content}"
+                else -> "Assistant: ${m.content}"
             }
-        } else "None yet."
+        }
 
         return """
-You are an Autonomous Mobile Browser Agent running locally on an Android device.
-You have full control over the mobile browser to fulfill the user's goal.
+You are an Autonomous Mobile Web Agent. You control a browser on an Android device to complete user requests.
 
-User Goal: "$goal"
-Current Page Title: "${page.title}"
+Goal: "$goal"
 Current URL: "${page.url}"
+Page Title: "${page.title}"
 
-Interactive Elements on Current Viewport:
-$elementsText
+Interactive DOM Elements:
+$elements
 
-Past Action History:
-$historyText
+Recent Action History:
+$recentHistory
 
-Choose EXACTLY ONE next action to execute on device.
-Respond in JSON format:
+Respond with EXACTLY ONE JSON object:
 {
-  "thought": "Brief explanation of what you are trying to do next",
+  "thought": "Your concise step-by-step reasoning",
   "action": "navigate" | "click" | "type" | "extract" | "done",
-  "target": "URL for navigate, selector for click/type, or final answer for done",
+  "target": "URL for navigate, CSS selector for click/type, or final summary for done",
   "text": "text to type if action is type"
 }
         """.trimIndent()
     }
 
-    private suspend fun callCloudModel(prompt: String, token: String?): String {
+    private suspend fun callModel(prompt: String, option: LlmModelOption, token: String?): String {
         return try {
             if (token != null) {
                 val res = api.testLlmProvider(
                     token = token,
                     fields = mapOf(
                         "prompt" to prompt,
-                        "system" to "You are an autonomous browser agent. Always return valid JSON."
+                        "provider" to option.provider,
+                        "model" to option.model,
+                        "system" to "You are an autonomous mobile browser agent. Always return valid JSON."
                     )
                 )
-                if (res.reply.isNotBlank()) res.reply else "{\"thought\": \"Analyze page\", \"action\": \"extract\", \"target\": \"\"}"
+                if (res.reply.isNotBlank()) res.reply else "{\"thought\": \"Inspecting page content\", \"action\": \"extract\", \"target\": \"\"}"
             } else {
-                "{\"thought\": \"No token configured\", \"action\": \"done\", \"target\": \"Please log in to use cloud models.\"}"
+                "{\"thought\": \"Authorization required\", \"action\": \"done\", \"target\": \"Please sign in to Zeus to run cloud AI models.\"}"
             }
         } catch (e: Exception) {
-            "{\"thought\": \"Model call failed: ${e.message}\", \"action\": \"done\", \"target\": \"Failed to reach model\"}"
+            "{\"thought\": \"Error contacting AI model: ${e.message}\", \"action\": \"done\", \"target\": \"Model inference failed\"}"
         }
     }
 
-    private fun parseModelAction(raw: String): ParsedAction {
+    private fun parseAction(raw: String): ParsedAction {
         val cleaned = raw.substringAfter("{").substringBeforeLast("}").let { "{$it}" }
         return try {
             val jsonElement = json.parseToJsonElement(cleaned) as? JsonObject
@@ -168,32 +211,20 @@ Respond in JSON format:
             val text = (jsonElement?.get("text") as? kotlinx.serialization.json.JsonPrimitive)?.content.orEmpty()
             ParsedAction(thought, action, target, text)
         } catch (_: Exception) {
-            ParsedAction("Extracted page info", "extract", "", "")
+            ParsedAction("Extracted page elements", "extract", "", "")
         }
     }
 
-    private suspend fun executeOnDeviceAction(action: ParsedAction): String {
+    private suspend fun executeAction(action: ParsedAction): String {
         return when (action.name.lowercase()) {
-            "navigate" -> {
-                val res = browserController.navigate(action.target)
-                res.message
-            }
-            "click" -> {
-                val res = browserController.clickElement(action.target)
-                res.message
-            }
-            "type" -> {
-                val res = browserController.typeText(action.target, action.text)
-                res.message
-            }
+            "navigate" -> browserController.navigate(action.target).message
+            "click" -> browserController.clickElement(action.target).message
+            "type" -> browserController.typeText(action.target, action.text).message
             "extract" -> {
                 val content = browserController.extractPageContent()
-                "Extracted ${content.elements.size} elements. Page title: ${content.title}"
+                "Extracted ${content.elements.size} elements from ${content.title}"
             }
-            "done", "finish" -> {
-                "Task completed: ${action.target}"
-            }
-            else -> "Unknown action: ${action.name}"
+            else -> "Executed: ${action.name}"
         }
     }
 

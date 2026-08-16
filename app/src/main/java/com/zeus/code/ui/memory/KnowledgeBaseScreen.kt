@@ -24,6 +24,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun KnowledgeBaseScreen(
     memoryManager: MemoryManager,
+    repository: String = "",
+    onBack: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val items by memoryManager.items.collectAsState()
@@ -33,19 +35,34 @@ fun KnowledgeBaseScreen(
     var selectedItemForDetail by remember { mutableStateOf<KnowledgeItem?>(null) }
     val scope = rememberCoroutineScope()
 
-    val displayItems = searchResults ?: items
+    val filteredItems = if (repository.isNotBlank()) {
+        items.filter { it.repository.isBlank() || it.repository.equals(repository, ignoreCase = true) }
+    } else items
+
+    val displayItems = searchResults ?: filteredItems
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
                     Column {
-                        Text("Knowledge Base & Memory", fontWeight = FontWeight.Bold, fontSize = 18.sp)
                         Text(
-                            text = "${items.size} memories indexed",
+                            text = if (repository.isNotBlank()) "$repository Knowledge" else "Knowledge Base & Memory",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 18.sp
+                        )
+                        Text(
+                            text = "${displayItems.size} memories available",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                    }
+                },
+                navigationIcon = {
+                    if (onBack != null) {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                        }
                     }
                 },
                 actions = {

@@ -74,7 +74,10 @@ import androidx.compose.material.icons.rounded.Upload
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.Psychology
 import androidx.compose.material.icons.rounded.Extension
-import com.zeus.code.ui.browser.BrowserAgentScreen
+import androidx.compose.material.icons.rounded.Smartphone
+import androidx.compose.material.icons.rounded.Apps
+import com.zeus.code.ui.browser.WebAgentScreen
+import com.zeus.code.ui.automation.PhoneControllerScreen
 import com.zeus.code.ui.memory.KnowledgeBaseScreen
 import com.zeus.code.ui.mcp.McpSettingsScreen
 import androidx.compose.material3.AlertDialog
@@ -297,12 +300,15 @@ private sealed interface WorkspaceRoute {
     data class Editor(val entry: FileEntry) : WorkspaceRoute
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun MainShell(state: ZeusState, viewModel: MainViewModel, agentViewModel: BackgroundAgentViewModel) {
     val agentState by agentViewModel.state.collectAsState()
-    var selectedTab by rememberSaveable { mutableStateOf(MainTab.HOME.name) }
+    var selectedTab by rememberSaveable { mutableStateOf(MainTab.AGENT.name) }
     val tab = MainTab.valueOf(selectedTab)
-    var settingsOpen by rememberSaveable { mutableStateOf(false) }
+    var standaloneTool by rememberSaveable { mutableStateOf<String?>(null) }
+    var knowledgeRepo by rememberSaveable { mutableStateOf("") }
+    var showToolsSheet by remember { mutableStateOf(false) }
     var workspaceRoute by remember { mutableStateOf<WorkspaceRoute>(WorkspaceRoute.List) }
 
     // Derive the workspaces sub-route from the selected workspace.
@@ -330,24 +336,21 @@ private fun MainShell(state: ZeusState, viewModel: MainViewModel, agentViewModel
         }
     }
 
-    // Only the four bottom-nav fragments show shell chrome (top bar + nav bar).
-    // Every detail surface — settings, agent session, workspace viewer,
-    // terminal, editor, repository detail — is a standalone full screen.
-    val standalone = settingsOpen ||
+    val standalone = standaloneTool != null ||
         route != WorkspaceRoute.List ||
         (tab == MainTab.AGENT && agentState.selectedSession != null) ||
         (tab == MainTab.GITHUB && state.selectedRepo != null)
 
     // Hierarchical back handling for every sub-route.
+    BackHandler(enabled = standaloneTool != null) { standaloneTool = null }
     BackHandler(enabled = route is WorkspaceRoute.Editor) { navWorkspace(WorkspaceRoute.Detail) }
     BackHandler(enabled = route is WorkspaceRoute.Terminal) { navWorkspace(WorkspaceRoute.Detail) }
     BackHandler(enabled = route == WorkspaceRoute.Detail) { viewModel.closeWorkspace() }
     BackHandler(enabled = tab == MainTab.GITHUB && state.selectedRepo != null) { viewModel.closeRepository() }
     BackHandler(enabled = tab == MainTab.AGENT && agentState.selectedSession != null) { agentViewModel.closeSession() }
-    BackHandler(enabled = settingsOpen) { settingsOpen = false }
 
     val refreshAction: (() -> Unit)? = when {
-        settingsOpen -> null
+        standaloneTool != null -> null
         tab == MainTab.AGENT -> ({ agentViewModel.refresh() })
         tab == MainTab.GITHUB && state.selectedRepo != null -> viewModel::refreshSelectedRepository
         tab == MainTab.GITHUB -> viewModel::refreshAccount
@@ -357,7 +360,7 @@ private fun MainShell(state: ZeusState, viewModel: MainViewModel, agentViewModel
     }
 
     val title = when {
-        settingsOpen -> "Settings"
+        standaloneTool == "SETTINGS" -> "Settings"
         tab == MainTab.GITHUB && state.selectedRepo != null -> state.selectedRepo!!.name
         tab == MainTab.WORKSPACES && route is WorkspaceRoute.Terminal -> "Terminal"
         tab == MainTab.WORKSPACES && route is WorkspaceRoute.Detail -> state.selectedWorkspace!!.name
@@ -379,9 +382,6 @@ private fun MainShell(state: ZeusState, viewModel: MainViewModel, agentViewModel
                         },
                         navigationIcon = {
                             when {
-                                settingsOpen -> IconButton(onClick = { settingsOpen = false }) {
-                                    Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back")
-                                }
                                 tab == MainTab.GITHUB && state.selectedRepo != null ->
                                     IconButton(onClick = viewModel::closeRepository) {
                                         Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back to repositories")
@@ -398,12 +398,13 @@ private fun MainShell(state: ZeusState, viewModel: MainViewModel, agentViewModel
                             }
                         },
                         actions = {
+                            IconButton(onClick = { showToolsSheet = true }) {
+                                Icon(Icons.Rounded.Apps, "Quick Tools")
+                            }
                             if (refreshAction != null) {
                                 IconButton(onClick = refreshAction) { Icon(Icons.Rounded.Refresh, "Refresh") }
                             }
-                            if (!settingsOpen) {
-                                IconButton(onClick = { settingsOpen = true }) { Icon(Icons.Rounded.Settings, "Settings") }
-                            }
+                            IconButton(onClick = { standaloneTool = "SETTINGS" }) { Icon(Icons.Rounded.Settings, "Settings") }
                         },
                         colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
                             containerColor = MaterialTheme.colorScheme.background
@@ -419,8 +420,6 @@ private fun MainShell(state: ZeusState, viewModel: MainViewModel, agentViewModel
             if (!standalone) {
                 NavigationBar {
                     MainTab.entries.forEach { item ->
-                        // Badge semantics: only the Agent tab notifies, and only for
-                        // sessions with activity the user has not viewed yet.
                         val count = when (item) {
                             MainTab.AGENT -> agentState.unreadIds.size
                             else -> 0
@@ -429,7 +428,7 @@ private fun MainShell(state: ZeusState, viewModel: MainViewModel, agentViewModel
                             selected = tab == item,
                             onClick = {
                                 selectedTab = item.name
-                                settingsOpen = false
+                                standaloneTool = null
                             },
                             icon = {
                                 BadgedBox(badge = {
@@ -446,36 +445,41 @@ private fun MainShell(state: ZeusState, viewModel: MainViewModel, agentViewModel
         snackbarHost = { SnackbarHost(snackbar) }
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
-            when {
-                settingsOpen -> SettingsScreen(
+            when (standaloneTool) {
+                "SETTINGS" -> SettingsScreen(
                     state = state,
                     viewModel = viewModel,
                     agentState = agentState,
                     agentViewModel = agentViewModel,
-                    onBack = { settingsOpen = false },
+                    onBack = { standaloneTool = null },
                     onOpenAgent = {
-                        settingsOpen = false
+                        standaloneTool = null
                         selectedTab = MainTab.AGENT.name
+                    },
+                    onOpenTool = { tool -> standaloneTool = tool }
+                )
+                "WEB_AGENT" -> WebAgentScreen(
+                    browserController = viewModel.browserController,
+                    runner = viewModel.browserAgentRunner,
+                    onBack = { standaloneTool = null }
+                )
+                "PHONE_CONTROLLER" -> PhoneControllerScreen(
+                    phoneController = viewModel.phoneController,
+                    onBack = { standaloneTool = null }
+                )
+                "MCP" -> McpSettingsScreen(
+                    mcpManager = viewModel.mcpManager,
+                    onBack = { standaloneTool = null }
+                )
+                "KNOWLEDGE" -> KnowledgeBaseScreen(
+                    memoryManager = viewModel.memoryManager,
+                    repository = knowledgeRepo,
+                    onBack = {
+                        standaloneTool = null
+                        knowledgeRepo = ""
                     }
                 )
                 else -> when (tab) {
-                    MainTab.HOME -> HomeScreen(
-                        state = state,
-                        agentState = agentState,
-                        onOpenWorkspace = { workspace ->
-                            viewModel.selectWorkspace(workspace)
-                            selectedTab = MainTab.WORKSPACES.name
-                        },
-                        onOpenSession = { session ->
-                            agentViewModel.openSession(session)
-                            selectedTab = MainTab.AGENT.name
-                        },
-                        onOpenTerminal = { workspace ->
-                            viewModel.selectWorkspace(workspace)
-                            selectedTab = MainTab.WORKSPACES.name
-                            navWorkspace(WorkspaceRoute.Terminal)
-                        }
-                    )
                     MainTab.AGENT -> BackgroundAgentScreen(
                         viewModel = agentViewModel,
                         workspaces = state.workspaces,
@@ -500,7 +504,11 @@ private fun MainShell(state: ZeusState, viewModel: MainViewModel, agentViewModel
                             agentState = agentState,
                             agentViewModel = agentViewModel,
                             onTerminal = { navWorkspace(WorkspaceRoute.Terminal) },
-                            onEdit = { navWorkspace(WorkspaceRoute.Editor(it)) }
+                            onEdit = { navWorkspace(WorkspaceRoute.Editor(it)) },
+                            onOpenKnowledge = { repo ->
+                                knowledgeRepo = repo
+                                standaloneTool = "KNOWLEDGE"
+                            }
                         )
                         is WorkspaceRoute.Terminal -> TerminalScreen(
                             state = state,
@@ -518,20 +526,124 @@ private fun MainShell(state: ZeusState, viewModel: MainViewModel, agentViewModel
                     } else {
                         RepositoryDetailScreen(state, viewModel, state.selectedRepo!!)
                     }
-                    MainTab.BROWSER -> BrowserAgentScreen(
-                        browserController = viewModel.browserController,
-                        runner = viewModel.browserAgentRunner
-                    )
-                    MainTab.KNOWLEDGE -> KnowledgeBaseScreen(
-                        memoryManager = viewModel.memoryManager
-                    )
-                    MainTab.MCP -> McpSettingsScreen(
-                        mcpManager = viewModel.mcpManager
-                    )
                 }
             }
         }
     }
+
+    if (showToolsSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showToolsSheet = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    "Autonomous & System Tools",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    "Select a dedicated agent tool or marketplace to launch full-screen.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(4.dp))
+
+                QuickToolCard(
+                    title = "Autonomous Web Agent",
+                    description = "Dual-tab browser & AI chat with model selector, DOM clicking, and form execution.",
+                    icon = Icons.Rounded.Language,
+                    onClick = {
+                        showToolsSheet = false
+                        standaloneTool = "WEB_AGENT"
+                    }
+                )
+
+                QuickToolCard(
+                    title = "Phone Controller",
+                    description = "Whole-device Android automation, accessibility gesture tap/swipe dispatching, and screen inspector.",
+                    icon = Icons.Rounded.Smartphone,
+                    onClick = {
+                        showToolsSheet = false
+                        standaloneTool = "PHONE_CONTROLLER"
+                    }
+                )
+
+                QuickToolCard(
+                    title = "MCP Marketplace & Servers",
+                    description = "Inbuilt popular Model Context Protocol tools (GitHub, SQLite, Web Search, Memory).",
+                    icon = Icons.Rounded.Extension,
+                    onClick = {
+                        showToolsSheet = false
+                        standaloneTool = "MCP"
+                    }
+                )
+
+                QuickToolCard(
+                    title = "Knowledge Base & Long-Term Memory",
+                    description = "Persistent semantic memories, coding preferences, and repo-scoped rules.",
+                    icon = Icons.Rounded.Psychology,
+                    onClick = {
+                        showToolsSheet = false
+                        knowledgeRepo = ""
+                        standaloneTool = "KNOWLEDGE"
+                    }
+                )
+                Spacer(Modifier.height(16.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun QuickToolCard(
+    title: String,
+    description: String,
+    icon: ImageVector,
+    onClick: () -> Unit
+) {
+    Card(
+        onClick = onClick,
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        ),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.primaryContainer
+            ) {
+                Icon(
+                    icon,
+                    contentDescription = null,
+                    modifier = Modifier.padding(10.dp),
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+            }
+            Spacer(Modifier.width(14.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(title, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Icon(Icons.AutoMirrored.Rounded.ArrowForward, contentDescription = null, tint = MaterialTheme.colorScheme.outline)
+        }
+    }
+}
 }
 
 /* ------------------------------------------------------------------------- */
@@ -818,7 +930,8 @@ private fun WorkspaceDetailScreen(
     agentState: AgentUiState,
     agentViewModel: BackgroundAgentViewModel,
     onTerminal: () -> Unit,
-    onEdit: (FileEntry) -> Unit
+    onEdit: (FileEntry) -> Unit,
+    onOpenKnowledge: (String) -> Unit
 ) {
     val workspace = state.selectedWorkspace ?: return
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
@@ -892,6 +1005,11 @@ private fun WorkspaceDetailScreen(
                     enabled = workspace.gitRepository
                 )
                 TonalChip(onClick = onTerminal, icon = Icons.Rounded.Terminal, label = "Terminal")
+                TonalChip(
+                    onClick = { onOpenKnowledge(workspace.remoteUrl?.substringAfter("github.com/")?.substringBefore(".git") ?: workspace.name) },
+                    icon = Icons.Rounded.Psychology,
+                    label = "Knowledge"
+                )
                 TonalChip(onClick = { showNewPath = true }, icon = Icons.Rounded.CreateNewFolder, label = "New file")
                 Box {
                     IconButton(onClick = { menu = true }) { Icon(Icons.Rounded.MoreVert, "More actions") }
@@ -1770,7 +1888,8 @@ private fun SettingsScreen(
     agentState: AgentUiState,
     agentViewModel: BackgroundAgentViewModel,
     onBack: () -> Unit,
-    onOpenAgent: () -> Unit
+    onOpenAgent: () -> Unit,
+    onOpenTool: (String) -> Unit
 ) {
     val context = LocalContext.current
     var disconnectConfirm by remember { mutableStateOf(false) }
@@ -1927,6 +2046,60 @@ private fun SettingsScreen(
                             Spacer(Modifier.width(8.dp))
                             Text("Connect from the Agent tab", maxLines = 1)
                         }
+                    }
+                }
+            }
+
+            item { SectionTitle("Autonomous & System Tools") }
+            item {
+                TonalCard(onClick = { onOpenTool("WEB_AGENT") }) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconTile(Icons.Rounded.Language)
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Autonomous Web Agent", style = MaterialTheme.typography.titleSmall)
+                            Text("Dual-tab browser control, DOM inspection & chat.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Icon(Icons.AutoMirrored.Rounded.ArrowForward, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+            item {
+                TonalCard(onClick = { onOpenTool("PHONE_CONTROLLER") }) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconTile(Icons.Rounded.Smartphone)
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Phone Controller", style = MaterialTheme.typography.titleSmall)
+                            Text("Accessibility gesture automation & node inspector.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Icon(Icons.AutoMirrored.Rounded.ArrowForward, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+            item {
+                TonalCard(onClick = { onOpenTool("MCP") }) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconTile(Icons.Rounded.Extension)
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("MCP Marketplace & Servers", style = MaterialTheme.typography.titleSmall)
+                            Text("Inbuilt popular MCP servers and custom endpoints.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Icon(Icons.AutoMirrored.Rounded.ArrowForward, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+            item {
+                TonalCard(onClick = { onOpenTool("KNOWLEDGE") }) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconTile(Icons.Rounded.Psychology)
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Knowledge Base & Memory", style = MaterialTheme.typography.titleSmall)
+                            Text("Workspace-scoped semantic rules & memories.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Icon(Icons.AutoMirrored.Rounded.ArrowForward, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
@@ -2568,23 +2741,15 @@ private fun ConfirmDialog(
 /* ------------------------------------------------------------------------- */
 
 private fun tabTitle(tab: MainTab) = when (tab) {
-    MainTab.HOME -> "Home"
     MainTab.AGENT -> "Agent"
     MainTab.WORKSPACES -> "Workspaces"
     MainTab.GITHUB -> "GitHub"
-    MainTab.BROWSER -> "Browser"
-    MainTab.KNOWLEDGE -> "Memory"
-    MainTab.MCP -> "MCP"
 }
 
 private fun tabIcon(tab: MainTab) = when (tab) {
-    MainTab.HOME -> Icons.Rounded.Home
     MainTab.AGENT -> Icons.Rounded.AutoAwesome
     MainTab.WORKSPACES -> Icons.Rounded.Folder
     MainTab.GITHUB -> Icons.Rounded.Source
-    MainTab.BROWSER -> Icons.Rounded.Language
-    MainTab.KNOWLEDGE -> Icons.Rounded.Psychology
-    MainTab.MCP -> Icons.Rounded.Extension
 }
 
 private fun formatSize(bytes: Long): String = when {

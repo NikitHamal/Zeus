@@ -17,6 +17,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.zeus.code.mcp.McpManager
+import com.zeus.code.mcp.McpPreset
+import com.zeus.code.mcp.McpPresets
 import com.zeus.code.mcp.McpServerConfig
 import com.zeus.code.mcp.McpTool
 
@@ -24,6 +26,7 @@ import com.zeus.code.mcp.McpTool
 @Composable
 fun McpSettingsScreen(
     mcpManager: McpManager,
+    onBack: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val servers by mcpManager.servers.collectAsState()
@@ -40,10 +43,17 @@ fun McpSettingsScreen(
                     Column {
                         Text("MCP Tools & Servers", fontWeight = FontWeight.Bold, fontSize = 18.sp)
                         Text(
-                            text = "${servers.count { it.enabled }} active servers · ${tools.size} tools discovered",
+                            text = "${servers.count { it.enabled }} active servers · ${tools.size} tools ready",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                    }
+                },
+                navigationIcon = {
+                    if (onBack != null) {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                        }
                     }
                 },
                 actions = {
@@ -70,12 +80,17 @@ fun McpSettingsScreen(
                 Tab(
                     selected = selectedTab == 0,
                     onClick = { selectedTab = 0 },
-                    text = { Text("Servers (${servers.size})") }
+                    text = { Text("My Servers (${servers.size})") }
                 )
                 Tab(
                     selected = selectedTab == 1,
                     onClick = { selectedTab = 1 },
-                    text = { Text("Available Tools (${tools.size})") }
+                    text = { Text("Inbuilt MCPs") }
+                )
+                Tab(
+                    selected = selectedTab == 2,
+                    onClick = { selectedTab = 2 },
+                    text = { Text("Tools (${tools.size})") }
                 )
             }
 
@@ -83,75 +98,99 @@ fun McpSettingsScreen(
                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             }
 
-            if (selectedTab == 0) {
-                if (servers.isEmpty()) {
-                    Box(
-                        modifier = Modifier.fillMaxSize().padding(32.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(
-                                Icons.Default.Extension,
-                                contentDescription = null,
-                                modifier = Modifier.size(64.dp),
-                                tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
-                            )
-                            Spacer(Modifier.height(16.dp))
-                            Text(
-                                "No MCP Servers Configured",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            Spacer(Modifier.height(8.dp))
-                            Text(
-                                "Connect Model Context Protocol (MCP) servers to equip Zeus agents with external tools and data sources.",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                            )
-                            Spacer(Modifier.height(24.dp))
-                            Button(onClick = { showAddDialog = true }) {
-                                Icon(Icons.Default.Add, contentDescription = null)
-                                Spacer(Modifier.width(8.dp))
-                                Text("Add MCP Server")
+            when (selectedTab) {
+                0 -> {
+                    // Active Servers Tab
+                    if (servers.isEmpty()) {
+                        Box(
+                            modifier = Modifier.fillMaxSize().padding(32.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Icon(
+                                    Icons.Default.Extension,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(64.dp),
+                                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+                                )
+                                Spacer(Modifier.height(16.dp))
+                                Text(
+                                    "No Active MCP Servers",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Spacer(Modifier.height(8.dp))
+                                Text(
+                                    "Add custom servers or install inbuilt presets from the Inbuilt MCPs tab.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                )
+                                Spacer(Modifier.height(24.dp))
+                                Button(onClick = { selectedTab = 1 }) {
+                                    Icon(Icons.Default.Storefront, contentDescription = null)
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("Browse Inbuilt MCPs")
+                                }
+                            }
+                        }
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            items(servers, key = { it.id }) { server ->
+                                McpServerCard(
+                                    server = server,
+                                    onToggle = { enabled -> mcpManager.toggleServer(server.id, enabled) },
+                                    onDelete = { mcpManager.removeServer(server.id) }
+                                )
                             }
                         }
                     }
-                } else {
+                }
+                1 -> {
+                    // Inbuilt Presets Tab
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        items(servers, key = { it.id }) { server ->
-                            McpServerCard(
-                                server = server,
-                                onToggle = { enabled -> mcpManager.toggleServer(server.id, enabled) },
-                                onDelete = { mcpManager.removeServer(server.id) }
+                        items(McpPresets.POPULAR_PRESETS) { preset ->
+                            val alreadyInstalled = servers.any { it.name.equals(preset.name, ignoreCase = true) }
+                            McpPresetCard(
+                                preset = preset,
+                                isInstalled = alreadyInstalled,
+                                onInstall = {
+                                    mcpManager.addServer(preset.name, preset.defaultUrl, emptyMap(), true)
+                                }
                             )
                         }
                     }
                 }
-            } else {
-                if (tools.isEmpty()) {
-                    Box(
-                        modifier = Modifier.fillMaxSize().padding(32.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            "No tools found. Make sure your active MCP servers are reachable.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                } else {
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        items(tools) { tool ->
-                            McpToolCard(tool = tool)
+                2 -> {
+                    // Available Tools Tab
+                    if (tools.isEmpty()) {
+                        Box(
+                            modifier = Modifier.fillMaxSize().padding(32.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                "No tools found. Make sure your active MCP servers are reachable.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            items(tools) { tool ->
+                                McpToolCard(tool = tool)
+                            }
                         }
                     }
                 }
@@ -168,6 +207,69 @@ fun McpSettingsScreen(
                 showAddDialog = false
             }
         )
+    }
+}
+
+@Composable
+fun McpPresetCard(
+    preset: McpPreset,
+    isInstalled: Boolean,
+    onInstall: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+        )
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer
+                    ) {
+                        Icon(
+                            Icons.Default.Extension,
+                            contentDescription = null,
+                            modifier = Modifier.padding(8.dp),
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Column {
+                        Text(preset.name, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            preset.category,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+                if (isInstalled) {
+                    FilledTonalButton(onClick = {}, enabled = false) {
+                        Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Active")
+                    }
+                } else {
+                    Button(onClick = onInstall) {
+                        Text("Add")
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                preset.description,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     }
 }
 

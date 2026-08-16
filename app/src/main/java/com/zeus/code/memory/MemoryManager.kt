@@ -63,6 +63,14 @@ class MemoryManager(context: Context) {
         db.search(query)
     }
 
+    suspend fun getMemoriesForRepo(repository: String): List<KnowledgeItem> = withContext(Dispatchers.IO) {
+        db.getByRepository(repository)
+    }
+
+    suspend fun searchMemoriesForRepo(query: String, repository: String): List<KnowledgeItem> = withContext(Dispatchers.IO) {
+        db.searchByRepository(query, repository)
+    }
+
     /** Ingests long markdown or text documentation by chunking it into smaller indexed memories. */
     fun ingestDocument(title: String, fullText: String, repository: String = "", tags: List<String> = emptyList()) {
         scope.launch {
