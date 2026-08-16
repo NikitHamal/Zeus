@@ -57,7 +57,7 @@ class PhoneOverlayManager(private val context: Context) {
         }
     }
 
-    fun show(currentStep: Int = 1, maxSteps: Int = 20, statusText: String = "Initializing...") {
+    fun show(currentStep: Int = 1, maxSteps: Int = 25, statusText: String = "Starting task...") {
         mainHandler.post {
             if (!hasOverlayPermission()) return@post
 
@@ -126,7 +126,7 @@ class PhoneOverlayManager(private val context: Context) {
             }
 
             val stepTitle = TextView(context).apply {
-                text = "Phone Agent $currentStep/$maxSteps"
+                text = "Step $currentStep of $maxSteps"
                 setTextColor(0xFFE2DDF5.toInt())
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
                 paint.isFakeBoldText = true
@@ -212,7 +212,7 @@ class PhoneOverlayManager(private val context: Context) {
 
     fun update(currentStep: Int, maxSteps: Int, statusText: String) {
         mainHandler.post {
-            stepTextView?.text = "Phone Agent $currentStep/$maxSteps"
+            stepTextView?.text = "Step $currentStep of $maxSteps"
             statusTextView?.text = statusText
         }
     }

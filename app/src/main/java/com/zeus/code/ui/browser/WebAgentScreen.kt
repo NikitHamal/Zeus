@@ -296,10 +296,12 @@ fun WebAgentScreen(
                                         if (text.isNotBlank()) {
                                             inputPrompt = ""
                                             val sel = agentState.llmSelection
+                                            val provider = if (sel.isDefault) "qwen" else sel.provider
+                                            val model = if (sel.isDefault) "" else sel.model
                                             runner.startTask(
                                                 goal = text,
-                                                provider = sel.provider,
-                                                model = sel.model,
+                                                provider = provider,
+                                                model = model,
                                                 providerId = sel.providerId
                                             )
                                         }

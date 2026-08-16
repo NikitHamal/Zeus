@@ -175,33 +175,36 @@ class BackgroundAgentApi(context: Context) {
     /** Universal LLM Chat completion endpoint for mobile agents (Web & Phone). */
     suspend fun chat(
         token: String,
-        provider: String,
-        model: String,
+        provider: String = "",
+        model: String = "",
         prompt: String = "",
         messages: List<Pair<String, String>> = emptyList(),
         providerId: String = "",
         system: String = ""
-    ): AgentChatResponse = postJson(
-        path = "/llm/chat/",
-        body = buildJsonObject {
-            put("provider", provider)
-            put("model", model)
-            if (providerId.isNotBlank()) put("providerId", providerId)
-            if (prompt.isNotBlank()) put("prompt", prompt)
-            if (system.isNotBlank()) put("system", system)
-            if (messages.isNotEmpty()) {
-                put("messages", kotlinx.serialization.json.JsonArray(
-                    messages.map { (role, content) ->
-                        buildJsonObject {
-                            put("role", role)
-                            put("content", content)
+    ): AgentChatResponse {
+        val resolvedProvider = provider.ifBlank { "qwen" }
+        return postJson(
+            path = "/llm/chat/",
+            body = buildJsonObject {
+                put("provider", resolvedProvider)
+                put("model", model)
+                if (providerId.isNotBlank()) put("providerId", providerId)
+                if (prompt.isNotBlank()) put("prompt", prompt)
+                if (system.isNotBlank()) put("system", system)
+                if (messages.isNotEmpty()) {
+                    put("messages", kotlinx.serialization.json.JsonArray(
+                        messages.map { (role, content) ->
+                            buildJsonObject {
+                                put("role", role)
+                                put("content", content)
+                            }
                         }
-                    }
-                ))
-            }
-        }.toString(),
-        token = token
-    )
+                    ))
+                }
+            }.toString(),
+            token = token
+        )
+    }
 
     suspend fun session(token: String, id: String): AgentSessionResponse = get("/sessions/$id/", token)
 

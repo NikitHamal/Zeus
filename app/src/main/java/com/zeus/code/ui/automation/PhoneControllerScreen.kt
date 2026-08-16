@@ -312,10 +312,12 @@ fun PhoneControllerScreen(
                                             if (text.isNotBlank()) {
                                                 promptText = ""
                                                 val sel = agentState.llmSelection
+                                                val provider = if (sel.isDefault) "qwen" else sel.provider
+                                                val model = if (sel.isDefault) "" else sel.model
                                                 phoneAgentRunner.startTask(
                                                     instruction = text,
-                                                    provider = sel.provider,
-                                                    model = sel.model,
+                                                    provider = provider,
+                                                    model = model,
                                                     providerId = sel.providerId
                                                 )
                                             }

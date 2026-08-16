@@ -52,7 +52,7 @@ class BrowserAgentRunner(
 
     fun startTask(
         goal: String,
-        provider: String = "",
+        provider: String = "qwen",
         model: String = "",
         providerId: String = ""
     ) {

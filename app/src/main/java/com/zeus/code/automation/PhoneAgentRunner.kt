@@ -84,7 +84,7 @@ class PhoneAgentRunner(
 
     fun startTask(
         instruction: String,
-        provider: String = "",
+        provider: String = "qwen",
         model: String = "",
         providerId: String = ""
     ) {
