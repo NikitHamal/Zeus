@@ -111,4 +111,17 @@ class PhoneAutomationService : AccessibilityService() {
             }
         }, null)
     }
+
+    fun setFocusedText(text: String): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+            ?: root.findFocus(AccessibilityNodeInfo.FOCUS_ACCESSIBILITY)
+        if (focused != null) {
+            val arguments = android.os.Bundle().apply {
+                putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+            }
+            return focused.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
+        }
+        return false
+    }
 }

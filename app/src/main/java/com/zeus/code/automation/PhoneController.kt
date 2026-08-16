@@ -87,6 +87,13 @@ class PhoneController(private val context: Context) {
         }
     }
 
+    suspend fun inputText(text: String): Boolean = withContext(Dispatchers.Main) {
+        val service = PhoneAutomationService.instance ?: return@withContext false
+        val success = service.setFocusedText(text)
+        addLog("INPUT", "Typed \"$text\" - Success: $success")
+        success
+    }
+
     suspend fun dumpScreenNodes(): List<UiElementNode> = withContext(Dispatchers.Main) {
         val service = PhoneAutomationService.instance ?: return@withContext emptyList()
         val nodes = service.dumpVisibleNodes()

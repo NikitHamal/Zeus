@@ -215,9 +215,18 @@ Respond ONLY with a JSON object describing the single next action.
                             delay(1500)
                         }
                         "launch_app" -> {
-                            val pkg = actionObj["package"]?.jsonPrimitive?.contentOrNull ?: "com.android.settings"
+                            var pkg = actionObj["package"]?.jsonPrimitive?.contentOrNull ?: "com.android.chrome"
+                            if (pkg.equals("chrome", ignoreCase = true)) pkg = "com.android.chrome"
+                            if (pkg.equals("settings", ignoreCase = true)) pkg = "com.android.settings"
+                            if (pkg.equals("youtube", ignoreCase = true)) pkg = "com.google.android.youtube"
+                            if (pkg.equals("tiktok", ignoreCase = true) || pkg.equals("douyin", ignoreCase = true)) pkg = "com.ss.android.ugc.aweme"
                             phoneController.launchApp(pkg)
                             delay(2000)
+                        }
+                        "type", "input" -> {
+                            val text = actionObj["text"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                            phoneController.inputText(text)
+                            delay(1200)
                         }
                         "key_home" -> {
                             phoneController.pressHome()
