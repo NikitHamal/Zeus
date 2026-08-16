@@ -463,10 +463,13 @@ private fun MainShell(state: ZeusState, viewModel: MainViewModel, agentViewModel
                 "WEB_AGENT" -> WebAgentScreen(
                     browserController = viewModel.browserController,
                     runner = viewModel.browserAgentRunner,
+                    agentViewModel = agentViewModel,
                     onBack = { standaloneTool = null }
                 )
                 "PHONE_CONTROLLER" -> PhoneControllerScreen(
                     phoneController = viewModel.phoneController,
+                    phoneAgentRunner = viewModel.phoneAgentRunner,
+                    agentViewModel = agentViewModel,
                     onBack = { standaloneTool = null }
                 )
                 "MCP" -> McpSettingsScreen(

@@ -83,6 +83,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val browserController = BrowserController(application)
     val browserAgentRunner = com.zeus.code.browser.BrowserAgentRunner(application, browserController)
     val phoneController = com.zeus.code.automation.PhoneController(application)
+    val phoneAgentRunner = com.zeus.code.automation.PhoneAgentRunner(application, phoneController)
     val memoryManager = MemoryManager(application)
 
     private val _state = MutableStateFlow(ZeusState())

@@ -4,6 +4,7 @@ import android.content.Context
 import com.zeus.code.data.BackgroundAgentApi
 import com.zeus.code.data.SecureTokenStore
 import java.util.UUID
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -73,20 +74,26 @@ class BrowserAgentRunner(
         _selectedModel.value = option
     }
 
-    fun sendMessage(userPrompt: String) {
-        if (userPrompt.isBlank() || _isRunning.value) return
-        val userMsg = WebAgentMessage(role = "user", content = userPrompt.trim())
-        _messages.value = _messages.value + userMsg
+    fun startTask(
+        goal: String,
+        provider: String = "motiftech",
+        model: String = "motif-102b",
+        providerId: String = ""
+    ) {
+        if (_isRunning.value) return
         _isRunning.value = true
+        _currentStatus.value = "Starting browser agent..."
+        _messages.value = _messages.value + WebAgentMessage(role = "user", content = goal)
 
         agentJob = scope.launch {
             try {
-                runAutonomousLoop(userPrompt)
+                runAutonomousLoop(goal, provider, model, providerId)
+            } catch (e: CancellationException) {
+                _currentStatus.value = "Cancelled"
             } catch (e: Exception) {
-                _currentStatus.value = "Error: ${e.message}"
                 _messages.value = _messages.value + WebAgentMessage(
                     role = "assistant",
-                    content = "Task encountered an error: ${e.message}"
+                    content = "Error during execution: ${e.message}"
                 )
             } finally {
                 _isRunning.value = false
@@ -105,9 +112,13 @@ class BrowserAgentRunner(
         )
     }
 
-    private suspend fun runAutonomousLoop(goal: String) = withContext(Dispatchers.IO) {
-        val token = tokenStore.read()
-        val currentModel = _selectedModel.value
+    private suspend fun runAutonomousLoop(
+        goal: String,
+        provider: String,
+        model: String,
+        providerId: String
+    ) = withContext(Dispatchers.IO) {
+        val token = tokenStore.get()
         val maxIterations = 20
 
         for (iteration in 1..maxIterations) {
@@ -117,8 +128,8 @@ class BrowserAgentRunner(
             val pageContent = browserController.extractPageContent()
             val prompt = buildPrompt(goal, pageContent, _messages.value)
 
-            _currentStatus.value = "Reasoning with ${currentModel.label}..."
-            val rawResponse = callModel(prompt, currentModel, token)
+            _currentStatus.value = "Reasoning with $model..."
+            val rawResponse = callModel(prompt, provider, model, providerId, token)
 
             val parsed = parseAction(rawResponse)
 
@@ -162,21 +173,21 @@ class BrowserAgentRunner(
         }
 
         return """
-You are an Autonomous Mobile Web Agent. You control a browser on an Android device to complete user requests.
+You are an autonomous AI browser controller agent running on an Android device.
+User Goal: "$goal"
 
-Goal: "$goal"
-Current URL: "${page.url}"
-Page Title: "${page.title}"
-
-Interactive DOM Elements:
+Current Page:
+Title: ${page.title}
+URL: ${page.url}
+Visible interactive elements:
 $elements
 
-Recent Action History:
+Recent Actions:
 $recentHistory
 
-Respond with EXACTLY ONE JSON object:
+Determine the single next action. Return ONLY a JSON object with:
 {
-  "thought": "Your concise step-by-step reasoning",
+  "thought": "brief explanation of what you are doing",
   "action": "navigate" | "click" | "type" | "extract" | "done",
   "target": "URL for navigate, CSS selector for click/type, or final summary for done",
   "text": "text to type if action is type"
@@ -184,19 +195,24 @@ Respond with EXACTLY ONE JSON object:
         """.trimIndent()
     }
 
-    private suspend fun callModel(prompt: String, option: LlmModelOption, token: String?): String {
+    private suspend fun callModel(
+        prompt: String,
+        provider: String,
+        model: String,
+        providerId: String,
+        token: String?
+    ): String {
         return try {
             if (token != null) {
-                val res = api.testLlmProvider(
+                val res = api.chat(
                     token = token,
-                    fields = mapOf(
-                        "prompt" to prompt,
-                        "provider" to option.provider,
-                        "model" to option.model,
-                        "system" to "You are an autonomous mobile browser agent. Always return valid JSON."
-                    )
+                    provider = provider,
+                    model = model,
+                    providerId = providerId,
+                    prompt = prompt,
+                    system = "You are an autonomous mobile browser agent. Always return valid JSON."
                 )
-                if (res.reply.isNotBlank()) res.reply else "{\"thought\": \"Inspecting page content\", \"action\": \"extract\", \"target\": \"\"}"
+                if (res.ok && res.reply.isNotBlank()) res.reply else "{\"thought\": \"Inspecting page content\", \"action\": \"extract\", \"target\": \"\"}"
             } else {
                 "{\"thought\": \"Authorization required\", \"action\": \"done\", \"target\": \"Please sign in to Zeus to run cloud AI models.\"}"
             }

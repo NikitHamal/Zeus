@@ -308,6 +308,15 @@ data class AgentLlmTestResponse(
 )
 
 @Serializable
+data class AgentChatResponse(
+    val ok: Boolean = false,
+    val reply: String = "",
+    val model: String = "",
+    val error: String? = null,
+    val code: String? = null
+)
+
+@Serializable
 data class AgentRepositoriesResponse(
     val ok: Boolean = false,
     val repositories: List<AgentRepository> = emptyList(),

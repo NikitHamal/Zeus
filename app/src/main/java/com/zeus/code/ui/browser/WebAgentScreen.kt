@@ -27,11 +27,15 @@ import com.zeus.code.browser.BrowserPageContent
 import com.zeus.code.browser.WebAgentMessage
 import kotlinx.coroutines.launch
 
+import com.zeus.code.ui.agent.AgentModelPickerDialog
+import com.zeus.code.ui.agent.BackgroundAgentViewModel
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WebAgentScreen(
     browserController: BrowserController,
     runner: BrowserAgentRunner,
+    agentViewModel: BackgroundAgentViewModel,
     onBack: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
@@ -39,18 +43,33 @@ fun WebAgentScreen(
     val isRunning by runner.isRunning.collectAsState()
     val messages by runner.messages.collectAsState()
     val currentStatus by runner.currentStatus.collectAsState()
-    val selectedModel by runner.selectedModel.collectAsState()
+    val agentState by agentViewModel.state.collectAsState()
 
     val currentUrl by browserController.currentUrl.collectAsState()
     val pageTitle by browserController.pageTitle.collectAsState()
     val isLoadingPage by browserController.isLoading.collectAsState()
 
     var inputPrompt by remember { mutableStateOf("") }
-    var showModelMenu by remember { mutableStateOf(false) }
+    var showModelPicker by remember { mutableStateOf(false) }
     var extractedContent by remember { mutableStateOf<BrowserPageContent?>(null) }
     var showInspectorSheet by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
+
+    val currentModelLabel = remember(agentState.llmSelection, agentState.llmCatalog) {
+        val sel = agentState.llmSelection
+        if (sel.isDefault) {
+            val defaultEntry = agentState.llmCatalog?.community?.firstOrNull { it.selectableForAgent }
+            defaultEntry?.models?.firstOrNull { it.id == defaultEntry.defaultModel }?.displayLabel
+                ?: defaultEntry?.label
+                ?: "Motif 3 (Default)"
+        } else {
+            val entry = (agentState.llmCatalog?.community.orEmpty() + agentState.llmCatalog?.official.orEmpty() + agentState.llmCatalog?.custom.orEmpty())
+                .firstOrNull { it.slug == sel.provider || it.id == sel.providerId }
+            val modelLabel = entry?.models?.firstOrNull { it.id == sel.model }?.displayLabel ?: sel.model
+            "${entry?.label ?: sel.provider} · $modelLabel"
+        }
+    }
 
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) {
@@ -64,14 +83,15 @@ fun WebAgentScreen(
                 title = {
                     Column {
                         Text(
-                            text = "Web Agent",
+                            text = "Autonomous Web Agent",
                             fontWeight = FontWeight.Bold,
                             style = MaterialTheme.typography.titleMedium
                         )
                         Text(
-                            text = selectedModel.label,
+                            text = currentModelLabel,
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.primary
+                            color = MaterialTheme.colorScheme.primary,
+                            maxLines = 1
                         )
                     }
                 },
@@ -83,37 +103,14 @@ fun WebAgentScreen(
                     }
                 },
                 actions = {
-                    // Model Picker Menu Button
-                    Box {
-                        TextButton(onClick = { showModelMenu = true }) {
-                            Icon(Icons.Default.Tune, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Model")
-                        }
-                        DropdownMenu(
-                            expanded = showModelMenu,
-                            onDismissRequest = { showModelMenu = false }
-                        ) {
-                            runner.availableModels.forEach { opt ->
-                                DropdownMenuItem(
-                                    text = {
-                                        Column {
-                                            Text(opt.label, fontWeight = if (opt == selectedModel) FontWeight.Bold else FontWeight.Normal)
-                                            Text(opt.provider.uppercase(), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-                                        }
-                                    },
-                                    onClick = {
-                                        runner.selectModel(opt)
-                                        showModelMenu = false
-                                    }
-                                )
-                            }
-                        }
-                    }
+                    // Unified Model Picker Button
+                    AssistChip(
+                        onClick = { showModelPicker = true },
+                        label = { Text("Model", style = MaterialTheme.typography.labelSmall) },
+                        leadingIcon = { Icon(Icons.Default.Tune, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                    )
                 },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface
-                )
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
             )
         },
         modifier = modifier
@@ -236,25 +233,33 @@ fun WebAgentScreen(
                                 shape = RoundedCornerShape(24.dp)
                             )
                             Spacer(Modifier.width(8.dp))
-                            if (!isRunning) {
-                                FilledIconButton(
-                                    onClick = {
-                                        val p = inputPrompt
-                                        inputPrompt = ""
-                                        runner.sendMessage(p)
-                                    },
-                                    enabled = inputPrompt.isNotBlank()
-                                ) {
-                                    Icon(Icons.Default.Send, contentDescription = "Send")
+                                if (!isRunning) {
+                                    FilledIconButton(
+                                        onClick = {
+                                            val p = inputPrompt.trim()
+                                            inputPrompt = ""
+                                            val sel = agentState.llmSelection
+                                            val provider = if (sel.isDefault) "motiftech" else sel.provider
+                                            val model = if (sel.isDefault) "motif-102b" else sel.model
+                                            runner.startTask(
+                                                goal = p,
+                                                provider = provider,
+                                                model = model,
+                                                providerId = sel.providerId
+                                            )
+                                        },
+                                        enabled = inputPrompt.isNotBlank()
+                                    ) {
+                                        Icon(Icons.Default.Send, contentDescription = "Send")
+                                    }
+                                } else {
+                                    IconButton(
+                                        onClick = { runner.stop() },
+                                        colors = IconButtonDefaults.filledIconButtonColors(containerColor = MaterialTheme.colorScheme.error)
+                                    ) {
+                                        Icon(Icons.Default.Stop, contentDescription = "Stop")
+                                    }
                                 }
-                            } else {
-                                IconButton(
-                                    onClick = { runner.stop() },
-                                    colors = IconButtonDefaults.filledIconButtonColors(containerColor = MaterialTheme.colorScheme.error)
-                                ) {
-                                    Icon(Icons.Default.Stop, contentDescription = "Stop")
-                                }
-                            }
                         }
                     }
                 }
@@ -391,6 +396,24 @@ fun WebAgentScreen(
                 }
             }
         }
+    }
+
+    if (showModelPicker) {
+        AgentModelPickerDialog(
+            state = agentState,
+            onDismiss = { showModelPicker = false },
+            onSelectDefault = {
+                agentViewModel.selectLlm(null)
+                showModelPicker = false
+            },
+            onSelect = { entry, modelId ->
+                agentViewModel.selectLlm(entry, modelId)
+                showModelPicker = false
+            },
+            onManageProviders = {
+                showModelPicker = false
+            }
+        )
     }
 }
 
