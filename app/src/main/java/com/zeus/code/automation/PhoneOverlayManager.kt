@@ -24,6 +24,7 @@ class PhoneOverlayManager(private val context: Context) {
     private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private val mainHandler = Handler(Looper.getMainLooper())
     private var overlayView: View? = null
+    private var windowParams: WindowManager.LayoutParams? = null
     private var stepTextView: TextView? = null
     private var statusTextView: TextView? = null
     private var pauseIconView: ImageView? = null
@@ -57,6 +58,19 @@ class PhoneOverlayManager(private val context: Context) {
         }
     }
 
+    fun setTouchPassThrough(enable: Boolean) {
+        mainHandler.post {
+            val view = overlayView ?: return@post
+            val params = windowParams ?: return@post
+            if (enable) {
+                params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+            } else {
+                params.flags = params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+            }
+            runCatching { windowManager.updateViewLayout(view, params) }
+        }
+    }
+
     fun show(title: String = "Step 1", statusText: String = "Starting task...") {
         mainHandler.post {
             if (!hasOverlayPermission()) return@post
@@ -69,7 +83,7 @@ class PhoneOverlayManager(private val context: Context) {
             val density = context.resources.displayMetrics.density
             fun dp(v: Float) = (v * density).toInt()
 
-            val windowParams = WindowManager.LayoutParams(
+            val params = WindowManager.LayoutParams(
                 WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.WRAP_CONTENT,
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
@@ -85,6 +99,7 @@ class PhoneOverlayManager(private val context: Context) {
                 gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
                 y = dp(50f)
             }
+            windowParams = params
 
             // Outer capsule card
             val container = LinearLayout(context).apply {
@@ -180,8 +195,8 @@ class PhoneOverlayManager(private val context: Context) {
                 override fun onTouch(v: View, event: MotionEvent): Boolean {
                     when (event.action) {
                         MotionEvent.ACTION_DOWN -> {
-                            initialX = windowParams.x
-                            initialY = windowParams.y
+                            initialX = params.x
+                            initialY = params.y
                             initialTouchX = event.rawX
                             initialTouchY = event.rawY
                             isDragging = false
@@ -194,9 +209,9 @@ class PhoneOverlayManager(private val context: Context) {
                                 isDragging = true
                             }
                             if (isDragging) {
-                                windowParams.x = initialX + dx
-                                windowParams.y = initialY + dy
-                                runCatching { windowManager.updateViewLayout(container, windowParams) }
+                                params.x = initialX + dx
+                                params.y = initialY + dy
+                                runCatching { windowManager.updateViewLayout(container, params) }
                             }
                             return false
                         }
@@ -206,7 +221,7 @@ class PhoneOverlayManager(private val context: Context) {
             })
 
             overlayView = container
-            runCatching { windowManager.addView(container, windowParams) }
+            runCatching { windowManager.addView(container, params) }
         }
     }
 
@@ -228,6 +243,7 @@ class PhoneOverlayManager(private val context: Context) {
             overlayView?.let { view ->
                 runCatching { windowManager.removeView(view) }
                 overlayView = null
+                windowParams = null
                 stepTextView = null
                 statusTextView = null
                 pauseIconView = null

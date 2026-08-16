@@ -173,15 +173,15 @@ class PhoneAgentRunner(
                         delay(500)
                     }
 
-                    overlayManager.update(stepTitle, "Inspecting active screen...")
-                    _currentStatus.value = "Inspecting active screen..."
+                    overlayManager.update(stepTitle, "Inspecting screen...")
+                    _currentStatus.value = "Inspecting screen..."
 
                     // 1. Capture screen UI hierarchy
                     val hierarchy = phoneController.dumpScreenHierarchy()
-                    val screenSummary = hierarchy.toPromptString(maxElements = 45)
+                    val screenSummary = hierarchy.toPromptString(maxElements = 50)
 
                     val screenTransitionNote = if (previousPackage.isNotBlank() && previousPackage != hierarchy.packageName) {
-                        "Screen transitioned: Now in app ${hierarchy.packageName} (${hierarchy.activityName})"
+                        "Screen Notice: Transited to app ${hierarchy.packageName} (${hierarchy.activityName})"
                     } else ""
                     previousPackage = hierarchy.packageName
                     previousActivity = hierarchy.activityName
@@ -200,29 +200,30 @@ Before outputting your action, reason step-by-step in <think>...</think>:
 3. Plan: What is the single best next action?
 
 Available Actions (Respond with JSON or XML tool call):
-1. {"action": "tap", "target": "[element_index_or_text]", "reason": "Click specific element"}
-2. {"action": "tap", "x": 540, "y": 960, "reason": "Tap coordinates"}
-3. {"action": "double_tap", "x": 540, "y": 960, "reason": "Double tap video or image"}
-4. {"action": "long_press", "x": 540, "y": 960, "duration_ms": 1000, "reason": "Long press"}
-5. {"action": "swipe", "startX": 540, "startY": 1500, "endX": 540, "endY": 400, "reason": "Swipe feed"}
-6. {"action": "scroll_down", "reason": "Scroll down"}
-7. {"action": "scroll_up", "reason": "Scroll up"}
-8. {"action": "type", "text": "search query", "clear_first": false, "submit": true, "reason": "Type text into search bar"}
-9. {"action": "launch_app", "package": "com.android.settings", "reason": "Launch app by name or package"}
-10. {"action": "open_url", "url": "https://example.com", "reason": "Open web link"}
-11. {"action": "key_home", "reason": "Press Home"}
-12. {"action": "key_back", "reason": "Press Back"}
-13. {"action": "key_recents", "reason": "Open recent apps"}
-14. {"action": "open_notifications", "reason": "Open notifications"}
-15. {"action": "wait", "seconds": 2, "reason": "Wait for loading"}
-16. {"action": "take_over", "reason": "Ask human user to solve biometric / OTP / CAPTCHA"}
-17. {"action": "finish", "text": "Summary of what was accomplished"}
+1. {"action": "tap", "target": "3", "reason": "Click element [3]"} (PREFERRED: target by index)
+2. {"action": "tap", "target": "Search", "reason": "Click element by text label"}
+3. {"action": "tap", "x": 540, "y": 960, "reason": "Tap exact coordinates"}
+4. {"action": "double_tap", "x": 540, "y": 960, "reason": "Double tap video or image"}
+5. {"action": "long_press", "x": 540, "y": 960, "duration_ms": 1000, "reason": "Long press"}
+6. {"action": "swipe", "startX": 540, "startY": 1500, "endX": 540, "endY": 400, "reason": "Swipe feed"}
+7. {"action": "scroll_down", "reason": "Scroll down"}
+8. {"action": "scroll_up", "reason": "Scroll up"}
+9. {"action": "type", "target": "3", "text": "search query", "clear_first": false, "submit": true, "reason": "Type text into search bar and search"}
+10. {"action": "launch_app", "package": "com.google.android.youtube", "reason": "Launch app by package or name"}
+11. {"action": "open_url", "url": "https://example.com", "reason": "Open web link"}
+12. {"action": "key_home", "reason": "Press Home"}
+13. {"action": "key_back", "reason": "Press Back"}
+14. {"action": "key_recents", "reason": "Open recent apps"}
+15. {"action": "open_notifications", "reason": "Open notifications"}
+16. {"action": "wait", "seconds": 2, "reason": "Wait for loading"}
+17. {"action": "take_over", "reason": "Ask human user to solve biometric / OTP / CAPTCHA"}
+18. {"action": "finish", "text": "Summary of what was accomplished"}
 
 Optional: You can include "plan": [{"content": "step description", "status": "pending|in_progress|completed"}] to update your dynamic plan.
 
 Rules:
 - Target elements using the [index] identifier or direct visible label from the screen elements list.
-- When typing into search inputs, set "submit": true to automatically trigger search.
+- When typing into search inputs, include "target": "[index]" and "submit": true to automatically focus and trigger search.
 - When the goal is completed, output action "finish".
 - Always output valid JSON or XML format.
 """.trimIndent()
@@ -236,7 +237,7 @@ Rules:
                     val prompt = """
 Current User Goal: "$instruction"
 Step: $step
-$planSection${if (screenTransitionNote.isNotBlank()) "\nState Notice: $screenTransitionNote\n" else ""}
+$planSection${if (screenTransitionNote.isNotBlank()) "\n$screenTransitionNote\n" else ""}
 Previous Actions:
 ${if (history.isEmpty()) "None (Starting now)" else history.takeLast(5).joinToString("\n")}
 
@@ -273,8 +274,14 @@ Determine the single next action to take.
                     overlayManager.update(stepTitle, thought)
                     _currentStatus.value = thought
 
-                    // Execute action on device
-                    val execOutcome = executeAction(parsedAction)
+                    // Execute action on device with pass-through overlay protection
+                    overlayManager.setTouchPassThrough(true)
+                    val execOutcome = try {
+                        executeAction(parsedAction)
+                    } finally {
+                        overlayManager.setTouchPassThrough(false)
+                    }
+
                     history.add("Step $step: [${parsedAction.actionName.uppercase()}] ${parsedAction.thought} -> $execOutcome")
 
                     _messages.value = _messages.value + PhoneChatMessage(
@@ -308,7 +315,15 @@ Determine the single next action to take.
                         break
                     }
 
-                    delay(800)
+                    // Settle delay based on action type
+                    val settleMs = when (parsedAction.actionName) {
+                        "launch_app" -> 1400L
+                        "tap", "click" -> 600L
+                        "type", "input" -> 500L
+                        "swipe", "scroll_down", "scroll_up" -> 600L
+                        else -> 400L
+                    }
+                    delay(settleMs)
                 }
             } catch (e: CancellationException) {
                 _currentStatus.value = "Stopped"
