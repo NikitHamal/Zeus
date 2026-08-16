@@ -54,6 +54,8 @@ fun WebAgentScreen(
     val isRunning by runner.isRunning.collectAsState()
     val messages by runner.messages.collectAsState()
     val currentStatus by runner.currentStatus.collectAsState()
+    val thinkingMode by runner.thinkingMode.collectAsState()
+    val webSearch by runner.webSearch.collectAsState()
     val agentState by agentViewModel.state.collectAsState()
 
     val currentUrl by browserController.currentUrl.collectAsState()
@@ -67,6 +69,7 @@ fun WebAgentScreen(
     var addressInput by remember { mutableStateOf("") }
     var isEditingAddress by remember { mutableStateOf(false) }
     var showModelPicker by remember { mutableStateOf(false) }
+    var showThinkingMenu by remember { mutableStateOf(false) }
     var extractedContent by remember { mutableStateOf<BrowserPageContent?>(null) }
     var showInspectorSheet by remember { mutableStateOf(false) }
     var elementFilterType by remember { mutableStateOf("ALL") }
@@ -193,31 +196,63 @@ fun WebAgentScreen(
                                 label = { Text(currentModelLabel, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelSmall) },
                                 leadingIcon = { Icon(Icons.Rounded.Tune, null, Modifier.size(16.dp)) }
                             )
-                            FilterChip(
-                                selected = runner.thinkingMode == "enabled",
-                                onClick = {
-                                    runner.thinkingMode = when (runner.thinkingMode) {
-                                        "auto" -> "enabled"
-                                        "enabled" -> "disabled"
-                                        else -> "auto"
-                                    }
-                                },
-                                label = {
-                                    Text(
-                                        when (runner.thinkingMode) {
-                                            "enabled" -> "Thinking: On"
-                                            "disabled" -> "Thinking: Off"
-                                            else -> "Thinking: Auto"
+                            Box {
+                                FilterChip(
+                                    selected = thinkingMode != "disabled",
+                                    onClick = { showThinkingMenu = true },
+                                    label = {
+                                        Text(
+                                            when (thinkingMode) {
+                                                "enabled" -> "Thinking: On"
+                                                "disabled" -> "Thinking: Off"
+                                                else -> "Thinking: Auto"
+                                            },
+                                            style = MaterialTheme.typography.labelSmall
+                                        )
+                                    },
+                                    leadingIcon = { Icon(Icons.Rounded.Psychology, null, Modifier.size(16.dp)) },
+                                    trailingIcon = { Icon(Icons.Rounded.ArrowDropDown, null, Modifier.size(16.dp)) }
+                                )
+                                DropdownMenu(
+                                    expanded = showThinkingMenu,
+                                    onDismissRequest = { showThinkingMenu = false }
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text("Auto (Recommended for Qwen)") },
+                                        leadingIcon = {
+                                            if (thinkingMode == "auto") Icon(Icons.Rounded.Check, null) else Spacer(Modifier.size(24.dp))
                                         },
-                                        style = MaterialTheme.typography.labelSmall
+                                        onClick = {
+                                            runner.setThinkingMode("auto")
+                                            showThinkingMenu = false
+                                        }
                                     )
-                                },
-                                leadingIcon = { Icon(Icons.Rounded.Psychology, null, Modifier.size(16.dp)) }
-                            )
+                                    DropdownMenuItem(
+                                        text = { Text("Thinking Enabled (Deep CoT)") },
+                                        leadingIcon = {
+                                            if (thinkingMode == "enabled") Icon(Icons.Rounded.Check, null) else Spacer(Modifier.size(24.dp))
+                                        },
+                                        onClick = {
+                                            runner.setThinkingMode("enabled")
+                                            showThinkingMenu = false
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Thinking Disabled (Fast)") },
+                                        leadingIcon = {
+                                            if (thinkingMode == "disabled") Icon(Icons.Rounded.Check, null) else Spacer(Modifier.size(24.dp))
+                                        },
+                                        onClick = {
+                                            runner.setThinkingMode("disabled")
+                                            showThinkingMenu = false
+                                        }
+                                    )
+                                }
+                            }
                             FilterChip(
-                                selected = runner.webSearch,
-                                onClick = { runner.webSearch = !runner.webSearch },
-                                label = { Text("Web Search", style = MaterialTheme.typography.labelSmall) },
+                                selected = webSearch,
+                                onClick = { runner.toggleWebSearch() },
+                                label = { Text(if (webSearch) "Web Search: On" else "Web Search: Off", style = MaterialTheme.typography.labelSmall) },
                                 leadingIcon = { Icon(Icons.Rounded.Search, null, Modifier.size(16.dp)) }
                             )
                         }

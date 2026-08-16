@@ -48,11 +48,27 @@ class PhoneAgentRunner(
     private val _currentStatus = MutableStateFlow("Ready")
     val currentStatus: StateFlow<String> = _currentStatus.asStateFlow()
 
-    // Configurable model settings
-    var thinkingMode: String = "auto"
-    var webSearch: Boolean = false
+    // Configurable model settings with reactive StateFlows
+    private val _thinkingMode = MutableStateFlow("auto")
+    val thinkingMode: StateFlow<String> = _thinkingMode.asStateFlow()
+
+    private val _webSearch = MutableStateFlow(false)
+    val webSearch: StateFlow<Boolean> = _webSearch.asStateFlow()
+
     var temperature: Float = 0.2f
     var maxTokens: Int = 4096
+
+    fun setThinkingMode(mode: String) {
+        _thinkingMode.value = mode
+    }
+
+    fun setWebSearch(enabled: Boolean) {
+        _webSearch.value = enabled
+    }
+
+    fun toggleWebSearch() {
+        _webSearch.value = !_webSearch.value
+    }
 
     private val _messages = MutableStateFlow<List<PhoneChatMessage>>(
         listOf(
@@ -334,8 +350,8 @@ Determine the single next action to take.
                     providerId = providerId,
                     system = system,
                     prompt = prompt,
-                    thinkingMode = thinkingMode,
-                    webSearch = webSearch,
+                    thinkingMode = _thinkingMode.value,
+                    webSearch = _webSearch.value,
                     temperature = temperature,
                     maxTokens = maxTokens
                 )
