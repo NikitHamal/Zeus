@@ -298,8 +298,8 @@ fun WebAgentScreen(
                                             val sel = agentState.llmSelection
                                             runner.startTask(
                                                 goal = text,
-                                                provider = if (sel.isDefault) "motiftech" else sel.provider,
-                                                model = if (sel.isDefault) "motif-102b" else sel.model,
+                                                provider = sel.provider,
+                                                model = sel.model,
                                                 providerId = sel.providerId
                                             )
                                         }

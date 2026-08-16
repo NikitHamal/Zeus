@@ -314,8 +314,8 @@ fun PhoneControllerScreen(
                                                 val sel = agentState.llmSelection
                                                 phoneAgentRunner.startTask(
                                                     instruction = text,
-                                                    provider = if (sel.isDefault) "motiftech" else sel.provider,
-                                                    model = if (sel.isDefault) "motif-102b" else sel.model,
+                                                    provider = sel.provider,
+                                                    model = sel.model,
                                                     providerId = sel.providerId
                                                 )
                                             }

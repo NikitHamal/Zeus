@@ -3,6 +3,7 @@ package com.zeus.code.browser
 import android.content.Context
 import com.zeus.code.data.AgentLlmToolParser
 import com.zeus.code.data.BackgroundAgentApi
+import com.zeus.code.data.BackgroundAgentApiException
 import com.zeus.code.data.ParsedLlmAction
 import com.zeus.code.data.SecureTokenStore
 import kotlinx.coroutines.CancellationException
@@ -51,8 +52,8 @@ class BrowserAgentRunner(
 
     fun startTask(
         goal: String,
-        provider: String = "motiftech",
-        model: String = "motif-102b",
+        provider: String = "",
+        model: String = "",
         providerId: String = ""
     ) {
         if (_isRunning.value) return
@@ -143,7 +144,8 @@ $pageSummary
 Determine the single next action.
 """.trimIndent()
 
-            _currentStatus.value = "Reasoning with $model..."
+            val activeModelLabel = model.ifBlank { if (provider.isNotBlank()) provider else "NEBians Default" }
+            _currentStatus.value = "Reasoning with $activeModelLabel..."
             val rawResponse = callLlm(
                 token = token,
                 provider = provider,
@@ -153,9 +155,8 @@ Determine the single next action.
                 prompt = prompt
             )
 
-            if (rawResponse.isBlank()) {
-                delay(1000)
-                continue
+            if (rawResponse == null) {
+                break
             }
 
             // Parse response
@@ -198,28 +199,56 @@ Determine the single next action.
         providerId: String,
         system: String,
         prompt: String
-    ): String {
+    ): String? {
         return withContext(Dispatchers.IO) {
             try {
-                if (token.isNotBlank()) {
-                    val res = api.chat(
-                        token = token,
-                        provider = provider,
-                        model = model,
-                        providerId = providerId,
-                        system = system,
-                        prompt = prompt
+                if (token.isBlank()) {
+                    _messages.value = _messages.value + WebAgentMessage(
+                        role = "system",
+                        content = "⚠️ Device is not connected to NEBians. Please open the Agent tab to connect Zeus, or select a configured AI provider in Settings."
                     )
-                    if (res.ok && res.reply.isNotBlank()) {
-                        res.reply
-                    } else {
-                        "{\"action\": \"extract\", \"thought\": \"Inspecting page content: ${res.error.orEmpty()}\"}"
-                    }
-                } else {
-                    "{\"action\": \"done\", \"text\": \"Please connect Zeus to NEBians or select an active LLM provider to run autonomous web agent tasks.\"}"
+                    return@withContext null
                 }
+
+                val res = api.chat(
+                    token = token,
+                    provider = provider,
+                    model = model,
+                    providerId = providerId,
+                    system = system,
+                    prompt = prompt
+                )
+
+                if (!res.ok) {
+                    val errMsg = res.error ?: "Inference request failed"
+                    _messages.value = _messages.value + WebAgentMessage(
+                        role = "system",
+                        content = "⚠️ LLM Error: $errMsg. Please check your provider configuration or switch models."
+                    )
+                    return@withContext null
+                }
+
+                if (res.reply.isBlank()) {
+                    _messages.value = _messages.value + WebAgentMessage(
+                        role = "system",
+                        content = "⚠️ Model returned an empty response. Please retry."
+                    )
+                    return@withContext null
+                }
+
+                res.reply
+            } catch (e: BackgroundAgentApiException) {
+                _messages.value = _messages.value + WebAgentMessage(
+                    role = "system",
+                    content = "⚠️ API Error (${e.statusCode}): ${e.message}"
+                )
+                null
             } catch (e: Exception) {
-                "{\"action\": \"wait\", \"seconds\": 2, \"thought\": \"Error contacting AI model: ${e.message}\"}"
+                _messages.value = _messages.value + WebAgentMessage(
+                    role = "system",
+                    content = "⚠️ Network error contacting LLM: ${e.message ?: e.javaClass.simpleName}"
+                )
+                null
             }
         }
     }

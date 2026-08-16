@@ -3,6 +3,7 @@ package com.zeus.code.automation
 import android.content.Context
 import com.zeus.code.data.AgentLlmToolParser
 import com.zeus.code.data.BackgroundAgentApi
+import com.zeus.code.data.BackgroundAgentApiException
 import com.zeus.code.data.ParsedLlmAction
 import com.zeus.code.data.SecureTokenStore
 import kotlinx.coroutines.CancellationException
@@ -83,8 +84,8 @@ class PhoneAgentRunner(
 
     fun startTask(
         instruction: String,
-        provider: String = "motiftech",
-        model: String = "motif-102b",
+        provider: String = "",
+        model: String = "",
         providerId: String = ""
     ) {
         if (_isRunning.value) return
@@ -188,8 +189,9 @@ $screenSummary
 Determine the single next action to take.
 """.trimIndent()
 
-                    overlayManager.update(step, maxSteps, "Reasoning next action...")
-                    _currentStatus.value = "Reasoning next action..."
+                    val activeModelLabel = model.ifBlank { if (provider.isNotBlank()) provider else "NEBians Default" }
+                    overlayManager.update(step, maxSteps, "Reasoning with $activeModelLabel...")
+                    _currentStatus.value = "Reasoning with $activeModelLabel..."
 
                     val response = callLlm(
                         token = token,
@@ -200,10 +202,9 @@ Determine the single next action to take.
                         prompt = prompt
                     )
 
-                    if (response.isBlank()) {
-                        overlayManager.update(step, maxSteps, "Waiting on model...")
-                        delay(1000)
-                        continue
+                    if (response == null) {
+                        // Error was handled and message emitted
+                        break
                     }
 
                     // Parse action and extract thinking
@@ -261,28 +262,56 @@ Determine the single next action to take.
         providerId: String,
         system: String,
         prompt: String
-    ): String {
+    ): String? {
         return withContext(Dispatchers.IO) {
             try {
-                if (token.isNotBlank()) {
-                    val res = api.chat(
-                        token = token,
-                        provider = provider,
-                        model = model,
-                        providerId = providerId,
-                        system = system,
-                        prompt = prompt
+                if (token.isBlank()) {
+                    _messages.value = _messages.value + PhoneChatMessage(
+                        sender = "system",
+                        text = "⚠️ Device is not connected to NEBians. Please open the Agent tab to connect Zeus, or select a configured AI provider in Settings."
                     )
-                    if (res.ok && res.reply.isNotBlank()) {
-                        res.reply
-                    } else {
-                        "{\"action\": \"wait\", \"seconds\": 1, \"thought\": \"Waiting for model output: ${res.error.orEmpty()}\"}"
-                    }
-                } else {
-                    "{\"action\": \"finish\", \"text\": \"Please connect Zeus to NEBians or configure an LLM provider to run autonomous phone tasks.\"}"
+                    return@withContext null
                 }
+
+                val res = api.chat(
+                    token = token,
+                    provider = provider,
+                    model = model,
+                    providerId = providerId,
+                    system = system,
+                    prompt = prompt
+                )
+
+                if (!res.ok) {
+                    val errMsg = res.error ?: "Inference request failed"
+                    _messages.value = _messages.value + PhoneChatMessage(
+                        sender = "system",
+                        text = "⚠️ LLM Error: $errMsg. Please check your provider configuration or switch models."
+                    )
+                    return@withContext null
+                }
+
+                if (res.reply.isBlank()) {
+                    _messages.value = _messages.value + PhoneChatMessage(
+                        sender = "system",
+                        text = "⚠️ Model returned an empty response. Please retry."
+                    )
+                    return@withContext null
+                }
+
+                res.reply
+            } catch (e: BackgroundAgentApiException) {
+                _messages.value = _messages.value + PhoneChatMessage(
+                    sender = "system",
+                    text = "⚠️ API Error (${e.statusCode}): ${e.message}"
+                )
+                null
             } catch (e: Exception) {
-                "{\"action\": \"wait\", \"seconds\": 2, \"thought\": \"Network error contacting LLM: ${e.message}\"}"
+                _messages.value = _messages.value + PhoneChatMessage(
+                    sender = "system",
+                    text = "⚠️ Network error contacting LLM: ${e.message ?: e.javaClass.simpleName}"
+                )
+                null
             }
         }
     }
