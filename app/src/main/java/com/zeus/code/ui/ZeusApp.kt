@@ -34,6 +34,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.rounded.AccountTree
 import androidx.compose.material.icons.rounded.Add
@@ -86,7 +87,10 @@ import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
@@ -641,171 +645,6 @@ private fun QuickToolCard(
             Icon(Icons.AutoMirrored.Rounded.ArrowForward, contentDescription = null, tint = MaterialTheme.colorScheme.outline)
         }
     }
-}
-}
-
-/* ------------------------------------------------------------------------- */
-/* Home                                                                       */
-/* ------------------------------------------------------------------------- */
-
-@Composable
-private fun HomeScreen(
-    state: ZeusState,
-    agentState: AgentUiState,
-    onOpenWorkspace: (Workspace) -> Unit,
-    onOpenSession: (AgentSession) -> Unit,
-    onOpenTerminal: (Workspace) -> Unit
-) {
-    val activeTasks = agentState.sessions.count { it.status in listOf("queued", "preparing", "running") }
-    val recentTasks = if (agentState.authorized) agentState.sessions.take(3) else emptyList()
-
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 18.dp, vertical = 14.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        item {
-            Column {
-                Text(
-                    greetingForNow(),
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    state.user?.name ?: state.user?.login ?: "coder",
-                    style = MaterialTheme.typography.headlineMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                HomeStat("Repositories", state.repositories.size, Icons.Rounded.Source, Modifier.weight(1f))
-                HomeStat("Workspaces", state.workspaces.size, Icons.Rounded.Folder, Modifier.weight(1f))
-                HomeStat("Active tasks", activeTasks, Icons.Rounded.AutoAwesome, Modifier.weight(1f))
-            }
-        }
-        state.selectedWorkspace?.let { workspace ->
-            item {
-                SectionTitle("Active workspace")
-                TonalCard(onClick = { onOpenWorkspace(workspace) }) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconTile(if (workspace.gitRepository) Icons.Rounded.Source else Icons.Rounded.Folder)
-                        Spacer(Modifier.width(12.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(workspace.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(
-                                workspace.currentBranch?.let { "Branch: $it" } ?: "Local folder",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                        IconButton(onClick = { onOpenTerminal(workspace) }) {
-                            Icon(Icons.Rounded.Terminal, "Open terminal", Modifier.size(20.dp))
-                        }
-                    }
-                }
-            }
-        }
-        if (recentTasks.isNotEmpty()) {
-            item { SectionTitle("Recent tasks") }
-            items(recentTasks, key = { "home-${it.id}" }) { session ->
-                TaskPeekRow(
-                    session = session,
-                    unread = session.id in agentState.unreadIds,
-                    onClick = { onOpenSession(session) }
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun HomeStat(label: String, value: Int, icon: ImageVector, modifier: Modifier = Modifier) {
-    ElevatedCard(
-        modifier,
-        shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
-    ) {
-        Row(
-            Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(value.toString(), style = MaterialTheme.typography.titleLarge)
-                Text(
-                    label,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            Icon(icon, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
-        }
-    }
-}
-
-@Composable
-private fun TaskPeekRow(session: AgentSession, unread: Boolean, onClick: () -> Unit) {
-    TonalCard(onClick = onClick) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            StatusDot(session.status)
-            Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        session.title,
-                        Modifier.weight(1f, fill = false),
-                        style = MaterialTheme.typography.titleSmall,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    if (unread) {
-                        Spacer(Modifier.width(6.dp))
-                        Box(
-                            Modifier.size(8.dp).clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.primary)
-                        )
-                    }
-                }
-                Text(
-                    "${session.repoFullName} · ${session.progress}%",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            Spacer(Modifier.width(8.dp))
-            Text(
-                if (session.updatedAt > 0) DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(session.updatedAt)) else "",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}
-
-@Composable
-private fun StatusDot(status: String) {
-    val color = when (status) {
-        "completed" -> MaterialTheme.colorScheme.tertiary
-        "failed", "cancelled" -> MaterialTheme.colorScheme.error
-        "queued", "preparing", "running" -> MaterialTheme.colorScheme.primary
-        else -> MaterialTheme.colorScheme.outline
-    }
-    Box(Modifier.size(10.dp).clip(CircleShape).background(color))
-}
-
-private fun greetingForNow(): String = when (Calendar.getInstance().get(Calendar.HOUR_OF_DAY)) {
-    in 5..11 -> "Good morning"
-    in 12..16 -> "Good afternoon"
-    in 17..20 -> "Good evening"
-    else -> "Good night"
 }
 
 /* ------------------------------------------------------------------------- */
