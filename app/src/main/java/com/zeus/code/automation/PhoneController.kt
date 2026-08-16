@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import android.util.DisplayMetrics
@@ -151,7 +152,6 @@ class PhoneController(private val context: Context) {
         if (bitmap != null) {
             addLog("SCREENSHOT", "Captured screen screenshot (${bitmap.width}x${bitmap.height})", true)
         } else {
-            // Fallback global action on API 28+
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 service.performGlobalKey(AccessibilityService.GLOBAL_ACTION_TAKE_SCREENSHOT)
                 addLog("SCREENSHOT", "Triggered system screenshot action", true)
@@ -160,6 +160,20 @@ class PhoneController(private val context: Context) {
             }
         }
         bitmap
+    }
+
+    suspend fun pressKey(keyName: String): Boolean = withContext(Dispatchers.Main) {
+        when (keyName.trim().uppercase(Locale.ROOT)) {
+            "BACK", "KEY_BACK", "KEYCODE_BACK" -> pressBack()
+            "HOME", "KEY_HOME", "KEYCODE_HOME" -> pressHome()
+            "RECENTS", "KEY_RECENTS", "APP_SWITCH" -> pressRecents()
+            "NOTIFICATIONS", "OPEN_NOTIFICATIONS" -> openNotifications()
+            "QUICK_SETTINGS", "OPEN_QUICK_SETTINGS" -> openQuickSettings()
+            "SCREENSHOT", "TAKE_SCREENSHOT" -> takeScreenshot() != null
+            "LOCK", "LOCK_SCREEN" -> lockScreen()
+            "POWER", "POWER_DIALOG" -> openPowerDialog()
+            else -> false
+        }
     }
 
     // ==================== TOUCH & GESTURES ====================
@@ -171,6 +185,16 @@ class PhoneController(private val context: Context) {
         val actualY = resolveCoordinate(y, metrics.heightPixels)
         val success = service.clickCoordinate(actualX, actualY)
         addLog("TAP", "Tapped at (${actualX.toInt()}, ${actualY.toInt()})", success)
+        success
+    }
+
+    suspend fun doubleTapCoordinates(x: Float, y: Float): Boolean = withContext(Dispatchers.Main) {
+        val service = PhoneAutomationService.instance ?: return@withContext false
+        val metrics = getDisplayMetrics()
+        val actualX = resolveCoordinate(x, metrics.widthPixels)
+        val actualY = resolveCoordinate(y, metrics.heightPixels)
+        val success = service.doubleTapCoordinate(actualX, actualY)
+        addLog("DOUBLE_TAP", "Double tapped at (${actualX.toInt()}, ${actualY.toInt()})", success)
         success
     }
 
@@ -234,10 +258,10 @@ class PhoneController(private val context: Context) {
         return swipe(startX, cy, endX, cy, 350L)
     }
 
-    suspend fun inputText(text: String, clearFirst: Boolean = false): Boolean = withContext(Dispatchers.Main) {
+    suspend fun inputText(text: String, clearFirst: Boolean = false, submit: Boolean = false): Boolean = withContext(Dispatchers.Main) {
         val service = PhoneAutomationService.instance ?: return@withContext false
-        val success = service.inputText(text, clearFirst)
-        addLog("TYPE", "Typed \"$text\"", success)
+        val success = service.inputText(text, clearFirst, submit)
+        addLog("TYPE", "Typed \"$text\" (clearFirst=$clearFirst, submit=$submit)", success)
         success
     }
 
@@ -361,6 +385,21 @@ class PhoneController(private val context: Context) {
             true
         } else {
             addLog("LAUNCH_APP", "App not found: $trimmed", false)
+            false
+        }
+    }
+
+    fun openUrl(url: String): Boolean {
+        val fullUrl = if (!url.startsWith("http://") && !url.startsWith("https://")) "https://$url" else url
+        return try {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(fullUrl)).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(intent)
+            addLog("OPEN_URL", "Opened URL: $fullUrl", true)
+            true
+        } catch (_: Exception) {
+            addLog("OPEN_URL", "Failed to open URL: $fullUrl", false)
             false
         }
     }

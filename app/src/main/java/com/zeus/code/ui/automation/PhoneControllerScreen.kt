@@ -3,10 +3,12 @@ package com.zeus.code.ui.automation
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -171,15 +173,43 @@ fun PhoneControllerScreen(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState())
                                     .padding(horizontal = 14.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
                                 AssistChip(
                                     onClick = { showModelPicker = true },
                                     label = { Text(currentModelLabel, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelSmall) },
                                     leadingIcon = { Icon(Icons.Rounded.Tune, null, Modifier.size(16.dp)) }
                                 )
-                                Spacer(Modifier.weight(1f))
+                                FilterChip(
+                                    selected = phoneAgentRunner.thinkingMode == "enabled",
+                                    onClick = {
+                                        phoneAgentRunner.thinkingMode = when (phoneAgentRunner.thinkingMode) {
+                                            "auto" -> "enabled"
+                                            "enabled" -> "disabled"
+                                            else -> "auto"
+                                        }
+                                    },
+                                    label = {
+                                        Text(
+                                            when (phoneAgentRunner.thinkingMode) {
+                                                "enabled" -> "Thinking: On"
+                                                "disabled" -> "Thinking: Off"
+                                                else -> "Thinking: Auto"
+                                            },
+                                            style = MaterialTheme.typography.labelSmall
+                                        )
+                                    },
+                                    leadingIcon = { Icon(Icons.Rounded.Psychology, null, Modifier.size(16.dp)) }
+                                )
+                                FilterChip(
+                                    selected = phoneAgentRunner.webSearch,
+                                    onClick = { phoneAgentRunner.webSearch = !phoneAgentRunner.webSearch },
+                                    label = { Text("Web Search", style = MaterialTheme.typography.labelSmall) },
+                                    leadingIcon = { Icon(Icons.Rounded.Search, null, Modifier.size(16.dp)) }
+                                )
                                 if (!isServiceActive) {
                                     FilledTonalButton(
                                         onClick = { phoneController.openAccessibilitySettings() },

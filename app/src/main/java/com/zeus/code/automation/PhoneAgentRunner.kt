@@ -47,6 +47,12 @@ class PhoneAgentRunner(
     private val _currentStatus = MutableStateFlow("Ready")
     val currentStatus: StateFlow<String> = _currentStatus.asStateFlow()
 
+    // Configurable model settings
+    var thinkingMode: String = "auto"
+    var webSearch: Boolean = false
+    var temperature: Float = 0.2f
+    var maxTokens: Int = 4096
+
     private val _messages = MutableStateFlow<List<PhoneChatMessage>>(
         listOf(
             PhoneChatMessage(
@@ -122,6 +128,8 @@ class PhoneAgentRunner(
         agentJob = scope.launch {
             val maxSteps = 25
             val history = mutableListOf<String>()
+            var previousPackage = ""
+            var previousActivity = ""
 
             try {
                 overlayManager.show(1, maxSteps, "Starting task...")
@@ -144,42 +152,57 @@ class PhoneAgentRunner(
 
                     // 1. Capture screen UI hierarchy
                     val hierarchy = phoneController.dumpScreenHierarchy()
-                    val screenSummary = hierarchy.toPromptString(maxElements = 40)
+                    val screenSummary = hierarchy.toPromptString(maxElements = 45)
 
-                    // 2. Build system prompt & prompt
+                    val screenTransitionNote = if (previousPackage.isNotBlank() && previousPackage != hierarchy.packageName) {
+                        "Screen transitioned: Now in app ${hierarchy.packageName} (${hierarchy.activityName})"
+                    } else ""
+                    previousPackage = hierarchy.packageName
+                    previousActivity = hierarchy.activityName
+
+                    // 2. Build system prompt with Cognitive Framework
                     val systemPrompt = """
 You are an expert Autonomous Android Phone Controller Agent.
 Your mission is to accomplish the user's task on an Android mobile device using accessibility gestures, element targeting, and app navigation.
 
 Device Screen: ${screenWidth}x${screenHeight} pixels.
 
+Cognitive Framework:
+Before outputting your action, reason step-by-step in <think>...</think>:
+1. Observation: What app & screen am I looking at? What are the key visible elements and fields?
+2. Analysis: Did the previous step succeed? Is the goal or next sub-goal visible on screen?
+3. Plan: What is the single best next action?
+
 Available Actions (Respond with JSON or XML tool call):
-1. {"action": "tap", "x": 540, "y": 960, "reason": "Tap element"}
-2. {"action": "tap", "target": "[element_index_or_text]", "reason": "Click specific element"}
-3. {"action": "long_press", "x": 540, "y": 960, "duration_ms": 1000, "reason": "Long press"}
-4. {"action": "swipe", "startX": 540, "startY": 1500, "endX": 540, "endY": 400, "reason": "Swipe up next feed"}
-5. {"action": "scroll_down", "reason": "Scroll down"}
-6. {"action": "scroll_up", "reason": "Scroll up"}
-7. {"action": "type", "text": "Search query", "reason": "Type text into focused field"}
-8. {"action": "launch_app", "package": "com.android.settings", "reason": "Launch Settings app"}
-9. {"action": "key_home", "reason": "Press Home"}
-10. {"action": "key_back", "reason": "Press Back"}
-11. {"action": "key_recents", "reason": "Open recent apps"}
-12. {"action": "open_notifications", "reason": "Open notifications"}
-13. {"action": "wait", "seconds": 2, "reason": "Wait for loading"}
-14. {"action": "finish", "text": "Summary of what was completed"}
+1. {"action": "tap", "target": "[element_index_or_text]", "reason": "Click specific element"}
+2. {"action": "tap", "x": 540, "y": 960, "reason": "Tap coordinates"}
+3. {"action": "double_tap", "x": 540, "y": 960, "reason": "Double tap video or image"}
+4. {"action": "long_press", "x": 540, "y": 960, "duration_ms": 1000, "reason": "Long press"}
+5. {"action": "swipe", "startX": 540, "startY": 1500, "endX": 540, "endY": 400, "reason": "Swipe feed"}
+6. {"action": "scroll_down", "reason": "Scroll down"}
+7. {"action": "scroll_up", "reason": "Scroll up"}
+8. {"action": "type", "text": "search query", "clear_first": false, "submit": true, "reason": "Type text into search bar"}
+9. {"action": "launch_app", "package": "com.android.settings", "reason": "Launch app by name or package"}
+10. {"action": "open_url", "url": "https://example.com", "reason": "Open web link"}
+11. {"action": "key_home", "reason": "Press Home"}
+12. {"action": "key_back", "reason": "Press Back"}
+13. {"action": "key_recents", "reason": "Open recent apps"}
+14. {"action": "open_notifications", "reason": "Open notifications"}
+15. {"action": "wait", "seconds": 2, "reason": "Wait for loading"}
+16. {"action": "take_over", "reason": "Ask human user to solve biometric / OTP / CAPTCHA"}
+17. {"action": "finish", "text": "Summary of what was accomplished"}
 
 Rules:
-- Choose coordinates or element indexes based on the visible screen elements list below.
-- Keep reasoning clear and concise.
+- Target elements using the [index] identifier or direct visible label from the screen elements list.
+- When typing into search inputs, set "submit": true to automatically trigger search.
 - When the goal is completed, output action "finish".
-- Output valid JSON or XML <tool name="..."> format.
+- Always output valid JSON or XML format.
 """.trimIndent()
 
                     val prompt = """
 Current User Goal: "$instruction"
 Step: $step / $maxSteps
-
+${if (screenTransitionNote.isNotBlank()) "\nState Notice: $screenTransitionNote\n" else ""}
 Previous Actions:
 ${if (history.isEmpty()) "None (Starting now)" else history.takeLast(5).joinToString("\n")}
 
@@ -189,7 +212,7 @@ $screenSummary
 Determine the single next action to take.
 """.trimIndent()
 
-                    val activeModelLabel = model.ifBlank { if (provider.isNotBlank()) provider else "NEBians Default" }
+                    val activeModelLabel = model.ifBlank { if (provider.isNotBlank()) provider else "Qwen 3.8 Max" }
                     overlayManager.update(step, maxSteps, "Reasoning with $activeModelLabel...")
                     _currentStatus.value = "Reasoning with $activeModelLabel..."
 
@@ -203,7 +226,6 @@ Determine the single next action to take.
                     )
 
                     if (response == null) {
-                        // Error was handled and message emitted
                         break
                     }
 
@@ -235,6 +257,17 @@ Determine the single next action to take.
                             thought = parsedAction.thought
                         )
                         delay(1200)
+                        break
+                    }
+
+                    if (parsedAction.actionName == "take_over") {
+                        overlayManager.update(step, maxSteps, "User takeover needed")
+                        _messages.value = _messages.value + PhoneChatMessage(
+                            sender = "agent",
+                            text = "✋ User takeover required: ${parsedAction.text.ifBlank { parsedAction.thought }}",
+                            thought = parsedAction.thought
+                        )
+                        delay(1500)
                         break
                     }
 
@@ -279,7 +312,11 @@ Determine the single next action to take.
                     model = model,
                     providerId = providerId,
                     system = system,
-                    prompt = prompt
+                    prompt = prompt,
+                    thinkingMode = thinkingMode,
+                    webSearch = webSearch,
+                    temperature = temperature,
+                    maxTokens = maxTokens
                 )
 
                 if (!res.ok) {
@@ -340,6 +377,12 @@ Determine the single next action to take.
                         "Tapped screen center [Success: $ok]"
                     }
                 }
+                "double_tap" -> {
+                    val x = action.x ?: (phoneController.getDisplayMetrics().widthPixels * 0.5f)
+                    val y = action.y ?: (phoneController.getDisplayMetrics().heightPixels * 0.5f)
+                    val ok = phoneController.doubleTapCoordinates(x, y)
+                    "Double tapped at (${x.toInt()}, ${y.toInt()}) [Success: $ok]"
+                }
                 "long_press" -> {
                     val x = action.x ?: (phoneController.getDisplayMetrics().widthPixels * 0.5f)
                     val y = action.y ?: (phoneController.getDisplayMetrics().heightPixels * 0.5f)
@@ -375,13 +418,20 @@ Determine the single next action to take.
                 }
                 "type" -> {
                     val textToType = action.text.ifBlank { action.target }
-                    val ok = phoneController.inputText(textToType)
+                    val clearFirst = action.rawParameters["clear_first"]?.equals("true", ignoreCase = true) ?: false
+                    val submit = action.rawParameters["submit"]?.equals("true", ignoreCase = true) ?: true
+                    val ok = phoneController.inputText(textToType, clearFirst, submit)
                     "Typed \"$textToType\" [Success: $ok]"
                 }
                 "launch_app" -> {
                     val app = action.packageName.ifBlank { action.target }.ifBlank { action.text }
                     val ok = phoneController.launchApp(app)
                     "Launched app: $app [Success: $ok]"
+                }
+                "open_url" -> {
+                    val url = action.target.ifBlank { action.text }
+                    val ok = phoneController.openUrl(url)
+                    "Opened URL: $url [Success: $ok]"
                 }
                 "key_home" -> {
                     val ok = phoneController.pressHome()
@@ -412,11 +462,14 @@ Determine the single next action to take.
                     delay(waitMs)
                     "Waited ${waitMs / 1000}s"
                 }
+                "take_over" -> {
+                    "Requested human takeover: ${action.text.ifBlank { action.thought }}"
+                }
                 "finish" -> {
                     "Completed task: ${action.text}"
                 }
                 else -> {
-                    "Unknown action: ${action.actionName}"
+                    "Executed: ${action.actionName}"
                 }
             }
         }

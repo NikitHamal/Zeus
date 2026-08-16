@@ -43,6 +43,12 @@ class BrowserAgentRunner(
     private val _currentStatus = MutableStateFlow("Ready")
     val currentStatus: StateFlow<String> = _currentStatus.asStateFlow()
 
+    // Configurable model settings
+    var thinkingMode: String = "auto"
+    var webSearch: Boolean = false
+    var temperature: Float = 0.2f
+    var maxTokens: Int = 4096
+
     private val _messages = MutableStateFlow<List<WebAgentMessage>>(emptyList())
     val messages: StateFlow<List<WebAgentMessage>> = _messages.asStateFlow()
 
@@ -113,6 +119,12 @@ class BrowserAgentRunner(
 You are an expert Autonomous Mobile Web Agent.
 Your mission is to accomplish the user's objective by browsing websites, clicking elements, submitting forms, scrolling, and extracting information.
 
+Cognitive Framework:
+Before outputting your action, reason step-by-step in <think>...</think>:
+1. Observation: What website and page am I on? What relevant buttons/inputs are visible?
+2. Analysis: Did the previous step succeed? What is the best next element to interact with?
+3. Plan: What is the single best next action?
+
 Available Actions (Respond with JSON or XML tool call):
 1. {"action": "navigate", "target": "https://example.com", "reason": "Go to URL or search query"}
 2. {"action": "click", "target": "z-3", "reason": "Click interactive element by ID or CSS selector"}
@@ -144,7 +156,7 @@ $pageSummary
 Determine the single next action.
 """.trimIndent()
 
-            val activeModelLabel = model.ifBlank { if (provider.isNotBlank()) provider else "NEBians Default" }
+            val activeModelLabel = model.ifBlank { if (provider.isNotBlank()) provider else "Qwen 3.8 Max" }
             _currentStatus.value = "Reasoning with $activeModelLabel..."
             val rawResponse = callLlm(
                 token = token,
@@ -216,7 +228,11 @@ Determine the single next action.
                     model = model,
                     providerId = providerId,
                     system = system,
-                    prompt = prompt
+                    prompt = prompt,
+                    thinkingMode = thinkingMode,
+                    webSearch = webSearch,
+                    temperature = temperature,
+                    maxTokens = maxTokens
                 )
 
                 if (!res.ok) {

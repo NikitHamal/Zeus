@@ -180,7 +180,11 @@ class BackgroundAgentApi(context: Context) {
         prompt: String = "",
         messages: List<Pair<String, String>> = emptyList(),
         providerId: String = "",
-        system: String = ""
+        system: String = "",
+        thinkingMode: String = "auto",
+        webSearch: Boolean = false,
+        temperature: Float = 0.2f,
+        maxTokens: Int = 4096
     ): AgentChatResponse {
         val resolvedProvider = provider.ifBlank { "qwen" }
         return postJson(
@@ -191,6 +195,10 @@ class BackgroundAgentApi(context: Context) {
                 if (providerId.isNotBlank()) put("providerId", providerId)
                 if (prompt.isNotBlank()) put("prompt", prompt)
                 if (system.isNotBlank()) put("system", system)
+                put("thinking_mode", thinkingMode)
+                put("web_search", webSearch)
+                put("temperature", temperature)
+                put("max_tokens", maxTokens)
                 if (messages.isNotEmpty()) {
                     put("messages", kotlinx.serialization.json.JsonArray(
                         messages.map { (role, content) ->

@@ -70,7 +70,7 @@ data class ScreenHierarchyDump(
     val timestamp: Long = System.currentTimeMillis()
 ) {
     fun toPromptString(maxElements: Int = 45): String {
-        val header = "Foreground App: $packageName ($activityName)\nTotal visible elements: ${nodes.size}"
+        val header = "Foreground App: $packageName ($activityName)\nTotal visible interactive elements: ${nodes.size}"
         val elementsList = nodes.take(maxElements).joinToString("\n") { it.toPromptSummary() }
         val footer = if (nodes.size > maxElements) "\n... (${nodes.size - maxElements} more elements)" else ""
         return "$header\n$elementsList$footer"
@@ -130,7 +130,7 @@ class PhoneAutomationService : AccessibilityService() {
         val root = rootInActiveWindow
         val nodes = mutableListOf<UiElementNode>()
         if (root != null) {
-            traverseNode(root, nodes, 0)
+            traverseNode(root, nodes, 0, parentClickable = false, parentBounds = null)
         }
         return ScreenHierarchyDump(
             packageName = currentPackageName.ifBlank { root?.packageName?.toString().orEmpty() }.ifBlank { "android" },
@@ -146,13 +146,14 @@ class PhoneAutomationService : AccessibilityService() {
     private fun traverseNode(
         node: AccessibilityNodeInfo?,
         out: MutableList<UiElementNode>,
-        depth: Int
+        depth: Int,
+        parentClickable: Boolean,
+        parentBounds: Rect?
     ) {
         if (node == null) return
         if (!node.isVisibleToUser) {
-            // Traverse children even if parent is container
             for (i in 0 until node.childCount) {
-                traverseNode(node.getChild(i), out, depth + 1)
+                traverseNode(node.getChild(i), out, depth + 1, parentClickable, parentBounds)
             }
             return
         }
@@ -160,8 +161,11 @@ class PhoneAutomationService : AccessibilityService() {
         val rect = Rect()
         node.getBoundsInScreen(rect)
 
-        // Ignore empty / 0-sized nodes
-        if (rect.width() > 0 && rect.height() > 0) {
+        // Effective clickability propagates from clickable ancestors or native clickable flag
+        val isClickable = node.isClickable || parentClickable
+        val effectiveBounds = if (rect.width() > 0 && rect.height() > 0) rect else (parentBounds ?: rect)
+
+        if (effectiveBounds.width() > 0 && effectiveBounds.height() > 0) {
             val text = node.text?.toString().orEmpty().trim()
             val desc = node.contentDescription?.toString().orEmpty().trim()
             val hint = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -174,6 +178,7 @@ class PhoneAutomationService : AccessibilityService() {
                 desc.isNotBlank() ||
                 hint.isNotBlank() ||
                 node.isClickable ||
+                isClickable ||
                 node.isEditable ||
                 node.isScrollable ||
                 node.isCheckable ||
@@ -186,8 +191,8 @@ class PhoneAutomationService : AccessibilityService() {
                     contentDescription = desc,
                     className = clazz,
                     resourceId = resId,
-                    bounds = rect,
-                    isClickable = node.isClickable,
+                    bounds = effectiveBounds,
+                    isClickable = isClickable,
                     isEditable = node.isEditable,
                     isScrollable = node.isScrollable,
                     isFocused = node.isFocused,
@@ -201,8 +206,11 @@ class PhoneAutomationService : AccessibilityService() {
             }
         }
 
+        val currentClickable = node.isClickable || parentClickable
+        val currentBounds = if (rect.width() > 0 && rect.height() > 0) rect else parentBounds
+
         for (i in 0 until node.childCount) {
-            traverseNode(node.getChild(i), out, depth + 1)
+            traverseNode(node.getChild(i), out, depth + 1, currentClickable, currentBounds)
         }
     }
 
@@ -216,6 +224,34 @@ class PhoneAutomationService : AccessibilityService() {
             }
             val stroke = GestureDescription.StrokeDescription(path, 0, 60)
             val gesture = GestureDescription.Builder().addStroke(stroke).build()
+
+            val dispatched = dispatchGesture(gesture, object : GestureResultCallback() {
+                override fun onCompleted(gestureDescription: GestureDescription?) {
+                    if (continuation.isActive) continuation.resume(true)
+                }
+
+                override fun onCancelled(gestureDescription: GestureDescription?) {
+                    if (continuation.isActive) continuation.resume(false)
+                }
+            }, null)
+
+            if (!dispatched && continuation.isActive) {
+                continuation.resume(false)
+            }
+        }
+    } ?: false
+
+    /**
+     * Double taps at coordinate (x, y) asynchronously.
+     */
+    suspend fun doubleTapCoordinate(x: Float, y: Float): Boolean = withTimeoutOrNull(3000L) {
+        suspendCancellableCoroutine { continuation ->
+            val path = Path().apply {
+                moveTo(x.coerceAtLeast(0f), y.coerceAtLeast(0f))
+            }
+            val stroke1 = GestureDescription.StrokeDescription(path, 0, 50)
+            val stroke2 = GestureDescription.StrokeDescription(path, 120, 50)
+            val gesture = GestureDescription.Builder().addStroke(stroke1).addStroke(stroke2).build()
 
             val dispatched = dispatchGesture(gesture, object : GestureResultCallback() {
                 override fun onCompleted(gestureDescription: GestureDescription?) {
@@ -296,17 +332,14 @@ class PhoneAutomationService : AccessibilityService() {
 
     /**
      * Inputs text into the currently focused or editable element.
-     * Tries ACTION_SET_TEXT first, then falls back to clipboard paste.
      */
-    suspend fun inputText(text: String, clearFirst: Boolean = false): Boolean = withContext(Dispatchers.Main) {
+    suspend fun inputText(text: String, clearFirst: Boolean = false, submit: Boolean = false): Boolean = withContext(Dispatchers.Main) {
         val root = rootInActiveWindow ?: return@withContext false
 
-        // Try finding focused input
         var focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
             ?: root.findFocus(AccessibilityNodeInfo.FOCUS_ACCESSIBILITY)
 
         if (focused == null) {
-            // Find first editable node
             focused = findFirstEditableNode(root)
         }
 
@@ -318,17 +351,22 @@ class PhoneAutomationService : AccessibilityService() {
             val args = Bundle().apply {
                 putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, finalText)
             }
-            val success = focused.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
-            if (success) return@withContext true
-
-            // Fallback: clipboard paste
-            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-            if (clipboard != null) {
-                clipboard.setPrimaryClip(ClipData.newPlainText("zeus_input", finalText))
-                focused.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
-                val pasted = focused.performAction(AccessibilityNodeInfo.ACTION_PASTE)
-                if (pasted) return@withContext true
+            var success = focused.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+            if (!success) {
+                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                if (clipboard != null) {
+                    clipboard.setPrimaryClip(ClipData.newPlainText("zeus_input", finalText))
+                    focused.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+                    success = focused.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+                }
             }
+
+            if (success && submit) {
+                // Try IME search/enter action
+                focused.performAction(AccessibilityNodeInfo.ACTION_NEXT_AT_MOVEMENT_GRANULARITY)
+            }
+
+            return@withContext success
         }
         false
     }

@@ -4,10 +4,12 @@ import android.view.ViewGroup
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -174,6 +176,53 @@ fun WebAgentScreen(
             if (selectedTab == 0) {
                 // ==================== TAB 1: CHAT INTERFACE ====================
                 Column(modifier = Modifier.fillMaxSize()) {
+                    Surface(
+                        tonalElevation = 1.dp,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState())
+                                .padding(horizontal = 14.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            AssistChip(
+                                onClick = { showModelPicker = true },
+                                label = { Text(currentModelLabel, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelSmall) },
+                                leadingIcon = { Icon(Icons.Rounded.Tune, null, Modifier.size(16.dp)) }
+                            )
+                            FilterChip(
+                                selected = runner.thinkingMode == "enabled",
+                                onClick = {
+                                    runner.thinkingMode = when (runner.thinkingMode) {
+                                        "auto" -> "enabled"
+                                        "enabled" -> "disabled"
+                                        else -> "auto"
+                                    }
+                                },
+                                label = {
+                                    Text(
+                                        when (runner.thinkingMode) {
+                                            "enabled" -> "Thinking: On"
+                                            "disabled" -> "Thinking: Off"
+                                            else -> "Thinking: Auto"
+                                        },
+                                        style = MaterialTheme.typography.labelSmall
+                                    )
+                                },
+                                leadingIcon = { Icon(Icons.Rounded.Psychology, null, Modifier.size(16.dp)) }
+                            )
+                            FilterChip(
+                                selected = runner.webSearch,
+                                onClick = { runner.webSearch = !runner.webSearch },
+                                label = { Text("Web Search", style = MaterialTheme.typography.labelSmall) },
+                                leadingIcon = { Icon(Icons.Rounded.Search, null, Modifier.size(16.dp)) }
+                            )
+                        }
+                    }
+
                     AnimatedVisibility(visible = isRunning) {
                         Surface(
                             color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
