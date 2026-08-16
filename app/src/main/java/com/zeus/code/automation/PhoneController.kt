@@ -3,7 +3,6 @@ package com.zeus.code.automation
 import android.accessibilityservice.AccessibilityService
 import android.content.Context
 import android.content.Intent
-import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.Uri
@@ -162,20 +161,6 @@ class PhoneController(private val context: Context) {
         bitmap
     }
 
-    suspend fun pressKey(keyName: String): Boolean = withContext(Dispatchers.Main) {
-        when (keyName.trim().uppercase(Locale.ROOT)) {
-            "BACK", "KEY_BACK", "KEYCODE_BACK" -> pressBack()
-            "HOME", "KEY_HOME", "KEYCODE_HOME" -> pressHome()
-            "RECENTS", "KEY_RECENTS", "APP_SWITCH" -> pressRecents()
-            "NOTIFICATIONS", "OPEN_NOTIFICATIONS" -> openNotifications()
-            "QUICK_SETTINGS", "OPEN_QUICK_SETTINGS" -> openQuickSettings()
-            "SCREENSHOT", "TAKE_SCREENSHOT" -> takeScreenshot() != null
-            "LOCK", "LOCK_SCREEN" -> lockScreen()
-            "POWER", "POWER_DIALOG" -> openPowerDialog()
-            else -> false
-        }
-    }
-
     // ==================== TOUCH & GESTURES ====================
 
     suspend fun tapCoordinates(x: Float, y: Float): Boolean = withContext(Dispatchers.Main) {
@@ -213,7 +198,7 @@ class PhoneController(private val context: Context) {
         startY: Float,
         endX: Float,
         endY: Float,
-        durationMs: Long = 350L
+        durationMs: Long = 300L
     ): Boolean = withContext(Dispatchers.Main) {
         val service = PhoneAutomationService.instance ?: return@withContext false
         val metrics = getDisplayMetrics()
@@ -229,17 +214,17 @@ class PhoneController(private val context: Context) {
     suspend fun scrollDown(): Boolean {
         val metrics = getDisplayMetrics()
         val cx = metrics.widthPixels * 0.5f
-        val startY = metrics.heightPixels * 0.75f
-        val endY = metrics.heightPixels * 0.25f
-        return swipe(cx, startY, cx, endY, 350L)
+        val startY = metrics.heightPixels * 0.72f
+        val endY = metrics.heightPixels * 0.28f
+        return swipe(cx, startY, cx, endY, 300L)
     }
 
     suspend fun scrollUp(): Boolean {
         val metrics = getDisplayMetrics()
         val cx = metrics.widthPixels * 0.5f
-        val startY = metrics.heightPixels * 0.25f
-        val endY = metrics.heightPixels * 0.75f
-        return swipe(cx, startY, cx, endY, 350L)
+        val startY = metrics.heightPixels * 0.28f
+        val endY = metrics.heightPixels * 0.72f
+        return swipe(cx, startY, cx, endY, 300L)
     }
 
     suspend fun scrollLeft(): Boolean {
@@ -247,7 +232,7 @@ class PhoneController(private val context: Context) {
         val cy = metrics.heightPixels * 0.5f
         val startX = metrics.widthPixels * 0.85f
         val endX = metrics.widthPixels * 0.15f
-        return swipe(startX, cy, endX, cy, 350L)
+        return swipe(startX, cy, endX, cy, 300L)
     }
 
     suspend fun scrollRight(): Boolean {
@@ -255,58 +240,60 @@ class PhoneController(private val context: Context) {
         val cy = metrics.heightPixels * 0.5f
         val startX = metrics.widthPixels * 0.15f
         val endX = metrics.widthPixels * 0.85f
-        return swipe(startX, cy, endX, cy, 350L)
+        return swipe(startX, cy, endX, cy, 300L)
     }
 
-    suspend fun inputText(text: String, clearFirst: Boolean = false, submit: Boolean = false): Boolean = withContext(Dispatchers.Main) {
+    // ==================== ELEMENT TARGETING & ACTIONS ====================
+
+    suspend fun clickElement(target: String): Boolean = withContext(Dispatchers.Main) {
         val service = PhoneAutomationService.instance ?: return@withContext false
-        val success = service.inputText(text, clearFirst, submit)
-        addLog("TYPE", "Typed \"$text\" (clearFirst=$clearFirst, submit=$submit)", success)
+        val trimmed = target.trim().removeSurrounding("[", "]")
+        val index = trimmed.toIntOrNull()
+
+        val success = if (index != null) {
+            service.clickElement(index = index)
+        } else {
+            service.clickElement(targetText = trimmed)
+        }
+
+        addLog("CLICK", "Clicked element \"$target\" - Success: $success", success)
         success
     }
 
-    // ==================== ELEMENT TARGETING ====================
-
     suspend fun clickElementByIndex(index: Int): Boolean = withContext(Dispatchers.Main) {
         val service = PhoneAutomationService.instance ?: return@withContext false
-        val nodes = service.dumpVisibleNodes()
-        val node = nodes.firstOrNull { it.index == index }
-        if (node != null) {
-            val cx = node.centerX.toFloat()
-            val cy = node.centerY.toFloat()
-            val success = service.clickCoordinate(cx, cy)
-            addLog("CLICK_ELEMENT", "Clicked element [$index] \"${node.displayLabel}\" at ($cx, $cy)", success)
-            success
-        } else {
-            addLog("CLICK_ELEMENT", "Element with index [$index] not found", false)
-            false
-        }
+        val success = service.clickElement(index = index)
+        addLog("CLICK_INDEX", "Clicked element [$index] - Success: $success", success)
+        success
     }
 
-    suspend fun clickElementByText(targetText: String): Boolean = withContext(Dispatchers.Main) {
+    suspend fun clickElementByText(text: String): Boolean = withContext(Dispatchers.Main) {
         val service = PhoneAutomationService.instance ?: return@withContext false
-        val nodes = service.dumpVisibleNodes()
-        val lowerTarget = targetText.lowercase(Locale.ROOT).trim()
+        val success = service.clickElement(targetText = text)
+        addLog("CLICK_TEXT", "Clicked text \"$text\" - Success: $success", success)
+        success
+    }
 
-        val exactMatch = nodes.firstOrNull {
-            it.text.equals(targetText, ignoreCase = true) ||
-                it.contentDescription.equals(targetText, ignoreCase = true)
-        }
-        val partialMatch = exactMatch ?: nodes.firstOrNull {
-            it.text.lowercase(Locale.ROOT).contains(lowerTarget) ||
-                it.contentDescription.lowercase(Locale.ROOT).contains(lowerTarget)
-        }
+    suspend fun inputText(
+        text: String,
+        target: String? = null,
+        clearFirst: Boolean = false,
+        submit: Boolean = true
+    ): Boolean = withContext(Dispatchers.Main) {
+        val service = PhoneAutomationService.instance ?: return@withContext false
+        val trimmedTarget = target?.trim()?.removeSurrounding("[", "]")
+        val targetIndex = trimmedTarget?.toIntOrNull()
+        val targetText = if (targetIndex == null && !trimmedTarget.isNullOrBlank()) trimmedTarget else null
 
-        if (partialMatch != null) {
-            val cx = partialMatch.centerX.toFloat()
-            val cy = partialMatch.centerY.toFloat()
-            val success = service.clickCoordinate(cx, cy)
-            addLog("CLICK_BY_TEXT", "Clicked text \"$targetText\" -> found \"${partialMatch.displayLabel}\"", success)
-            success
-        } else {
-            addLog("CLICK_BY_TEXT", "No element matching \"$targetText\" found on screen", false)
-            false
-        }
+        val success = service.inputText(
+            targetIndex = targetIndex,
+            targetText = targetText,
+            textToType = text,
+            clearFirst = clearFirst,
+            submit = submit
+        )
+        addLog("TYPE", "Entered text \"$text\" into ${target ?: "focused field"} - Success: $success", success)
+        success
     }
 
     // ==================== SCREEN INSPECTION ====================
@@ -405,9 +392,10 @@ class PhoneController(private val context: Context) {
     }
 
     private fun resolveCoordinate(value: Float, maxDimension: Int): Float {
+        // If coordinate is in normalized 0.0..1.0 range, scale to pixels.
+        // If it's already in absolute pixel coordinates (e.g. 540, 1920), keep it as pixels!
         return when {
-            value <= 1.0f && value > 0f -> value * maxDimension
-            value <= 1000f && maxDimension > 1000 -> (value / 1000f) * maxDimension
+            value in 0.0001f..1.0f -> value * maxDimension
             else -> value.coerceIn(0f, maxDimension.toFloat())
         }
     }

@@ -393,19 +393,13 @@ Determine the single next action to take.
     private suspend fun executeAction(action: ParsedLlmAction): String {
         return withContext(Dispatchers.Main) {
             when (action.actionName) {
-                "tap" -> {
-                    if (action.x != null && action.y != null) {
+                "tap", "click" -> {
+                    if (action.target.isNotBlank()) {
+                        val ok = phoneController.clickElement(action.target)
+                        "Clicked element \"${action.target}\" [Success: $ok]"
+                    } else if (action.x != null && action.y != null) {
                         val ok = phoneController.tapCoordinates(action.x, action.y)
                         "Tapped at (${action.x.toInt()}, ${action.y.toInt()}) [Success: $ok]"
-                    } else if (action.target.isNotBlank()) {
-                        val idx = action.target.toIntOrNull()
-                        if (idx != null) {
-                            val ok = phoneController.clickElementByIndex(idx)
-                            "Tapped element [$idx] [Success: $ok]"
-                        } else {
-                            val ok = phoneController.clickElementByText(action.target)
-                            "Tapped text \"${action.target}\" [Success: $ok]"
-                        }
                     } else {
                         val metrics = phoneController.getDisplayMetrics()
                         val cx = metrics.widthPixels * 0.5f
@@ -433,7 +427,7 @@ Determine the single next action to take.
                     val sy = action.startY ?: (metrics.heightPixels * 0.75f)
                     val ex = action.endX ?: (metrics.widthPixels * 0.5f)
                     val ey = action.endY ?: (metrics.heightPixels * 0.25f)
-                    val dur = action.durationMs ?: 350L
+                    val dur = action.durationMs ?: 300L
                     val ok = phoneController.swipe(sx, sy, ex, ey, dur)
                     "Swiped from (${sx.toInt()}, ${sy.toInt()}) to (${ex.toInt()}, ${ey.toInt()}) [Success: $ok]"
                 }
@@ -453,12 +447,18 @@ Determine the single next action to take.
                     val ok = phoneController.scrollRight()
                     "Scrolled right [Success: $ok]"
                 }
-                "type" -> {
-                    val textToType = action.text.ifBlank { action.target }
+                "type", "input" -> {
+                    val textToType = action.text.ifBlank { action.rawParameters["query"] }.orEmpty()
+                    val target = action.target.takeIf { it.isNotBlank() && it != textToType }
                     val clearFirst = action.rawParameters["clear_first"]?.equals("true", ignoreCase = true) ?: false
                     val submit = action.rawParameters["submit"]?.equals("true", ignoreCase = true) ?: true
-                    val ok = phoneController.inputText(textToType, clearFirst, submit)
-                    "Typed \"$textToType\" [Success: $ok]"
+                    val ok = phoneController.inputText(
+                        text = textToType,
+                        target = target,
+                        clearFirst = clearFirst,
+                        submit = submit
+                    )
+                    "Entered \"$textToType\" ${if (target != null) "into \"$target\"" else ""} [Success: $ok]"
                 }
                 "launch_app" -> {
                     val app = action.packageName.ifBlank { action.target }.ifBlank { action.text }
