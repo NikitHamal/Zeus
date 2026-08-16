@@ -33,7 +33,7 @@ class PhoneAgentRunner(
     val phoneController: PhoneController,
     val overlayManager: PhoneOverlayManager = PhoneOverlayManager(context),
     private val api: BackgroundAgentApi = BackgroundAgentApi(context),
-    private val tokenStore: SecureTokenStore = SecureTokenStore(context)
+    private val tokenStore: SecureTokenStore = SecureTokenStore(context, "background_agent")
 ) {
     private val scope = CoroutineScope(Dispatchers.IO)
     private var agentJob: Job? = null
@@ -92,15 +92,7 @@ class PhoneAgentRunner(
             return
         }
 
-        val savedToken = tokenStore.read()
-        if (savedToken.isNullOrBlank()) {
-            _messages.value = _messages.value + PhoneChatMessage(
-                sender = "system",
-                text = "⚠️ Please connect Zeus to NEBians from the Agent tab first to authenticate cloud LLM execution."
-            )
-            return
-        }
-        val token: String = savedToken
+        val token: String = tokenStore.read().orEmpty()
 
         _isRunning.value = true
         _isPaused.value = false

@@ -38,7 +38,7 @@ class BrowserAgentRunner(
     private val context: Context,
     private val browserController: BrowserController,
     private val api: BackgroundAgentApi = BackgroundAgentApi(context),
-    private val tokenStore: SecureTokenStore = SecureTokenStore(context)
+    private val tokenStore: SecureTokenStore = SecureTokenStore(context, "background_agent")
 ) {
     private val scope = CoroutineScope(Dispatchers.IO)
     private var agentJob: Job? = null
