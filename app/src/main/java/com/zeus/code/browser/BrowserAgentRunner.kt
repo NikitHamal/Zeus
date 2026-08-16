@@ -149,7 +149,7 @@ Respond in JSON format:
                         "system" to "You are an autonomous browser agent. Always return valid JSON."
                     )
                 )
-                res.output.ifBlank { "{\"thought\": \"Analyze page\", \"action\": \"extract\", \"target\": \"\"}" }
+                if (res.reply.isNotBlank()) res.reply else "{\"thought\": \"Analyze page\", \"action\": \"extract\", \"target\": \"\"}"
             } else {
                 "{\"thought\": \"No token configured\", \"action\": \"done\", \"target\": \"Please log in to use cloud models.\"}"
             }
