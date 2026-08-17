@@ -418,23 +418,23 @@ Determine the single next action to take.
             when (action.actionName) {
                 // Self-contained direct actions (OpenDroid style)
                 "play_youtube" -> {
-                    val query = action.text.ifBlank { action.target }.ifBlank { action.rawParameters["query"] }.orEmpty()
+                    val query = action.text.ifBlank { action.target }.ifBlank { action.rawParameters["query"].orEmpty() }
                     val ok = phoneController.playYoutube(query)
                     "Played YouTube search for \"$query\" [Success: $ok]"
                 }
                 "play_music" -> {
-                    val query = action.text.ifBlank { action.target }.ifBlank { action.rawParameters["query"] }.orEmpty()
+                    val query = action.text.ifBlank { action.target }.ifBlank { action.rawParameters["query"].orEmpty() }
                     val app = action.rawParameters["app"] ?: "spotify"
                     val ok = phoneController.playMusic(query, app)
                     "Played $app music for \"$query\" [Success: $ok]"
                 }
                 "open_settings" -> {
-                    val section = action.target.ifBlank { action.text }.ifBlank { action.rawParameters["section"] }.ifBlank { "storage" }
+                    val section = action.target.ifBlank { action.text }.ifBlank { action.rawParameters["section"].orEmpty() }.ifBlank { "storage" }
                     val ok = phoneController.openSettingsSection(section)
                     "Opened Settings: $section [Success: $ok]"
                 }
                 "media_control" -> {
-                    val cmd = action.target.ifBlank { action.rawParameters["command"] }.ifBlank { "play" }
+                    val cmd = action.target.ifBlank { action.rawParameters["command"].orEmpty() }.ifBlank { "play" }
                     val lvl = action.rawParameters["level"]?.toIntOrNull()
                     val ok = phoneController.mediaControl(cmd, lvl)
                     "Dispatched media control $cmd [Success: $ok]"
@@ -496,7 +496,7 @@ Determine the single next action to take.
                     "Scrolled right [Success: $ok]"
                 }
                 "type", "input" -> {
-                    val textToType = action.text.ifBlank { action.rawParameters["query"] }.orEmpty()
+                    val textToType = action.text.ifBlank { action.rawParameters["query"].orEmpty() }
                     val target = action.target.takeIf { it.isNotBlank() && it != textToType }
                     val clearFirst = action.rawParameters["clear_first"]?.equals("true", ignoreCase = true) ?: false
                     val submit = action.rawParameters["submit"]?.equals("true", ignoreCase = true) ?: true
