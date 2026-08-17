@@ -74,7 +74,7 @@ class PhoneAgentRunner(
         listOf(
             PhoneChatMessage(
                 sender = "agent",
-                text = "Hello! I am your Autonomous Phone Controller Agent. Tell me what to do on your device (e.g. 'Open Settings and check storage', 'Open YouTube and search for Lo-Fi', 'Open Douyin / TikTok and scroll 5 videos'). I will execute gestures and navigate in real-time."
+                text = "Hello! I am your Autonomous Phone Controller Agent. Tell me what to do on your device (e.g. 'Open Settings and check storage', 'Open YouTube and search for Lo-Fi', 'Play Spotify music', 'Open Douyin / TikTok and scroll 5 videos'). I will execute gestures and navigate in real-time."
             )
         )
     )
@@ -186,10 +186,10 @@ class PhoneAgentRunner(
                     previousPackage = hierarchy.packageName
                     previousActivity = hierarchy.activityName
 
-                    // 2. Build system prompt with Cognitive Framework
+                    // 2. Build system prompt with Cognitive Framework & OpenDroid-style Self-Contained + UI Actions
                     val systemPrompt = """
 You are an expert Autonomous Android Phone Controller Agent.
-Your mission is to accomplish the user's task on an Android mobile device using accessibility gestures, element targeting, and app navigation.
+Your mission is to accomplish the user's task on an Android mobile device using intents, accessibility gestures, element targeting, and in-app automation.
 
 Device Screen: ${screenWidth}x${screenHeight} pixels.
 
@@ -199,31 +199,39 @@ Before outputting your action, reason step-by-step in <think>...</think>:
 2. Analysis: Did the previous step succeed? Is the goal or next sub-goal visible on screen?
 3. Plan: What is the single best next action?
 
-Available Actions (Respond with JSON or XML tool call):
-1. {"action": "tap", "target": "3", "reason": "Click element [3]"} (PREFERRED: target by index)
-2. {"action": "tap", "target": "Search", "reason": "Click element by text label"}
-3. {"action": "tap", "x": 540, "y": 960, "reason": "Tap exact coordinates"}
-4. {"action": "double_tap", "x": 540, "y": 960, "reason": "Double tap video or image"}
-5. {"action": "long_press", "x": 540, "y": 960, "duration_ms": 1000, "reason": "Long press"}
-6. {"action": "swipe", "startX": 540, "startY": 1500, "endX": 540, "endY": 400, "reason": "Swipe feed"}
-7. {"action": "scroll_down", "reason": "Scroll down"}
-8. {"action": "scroll_up", "reason": "Scroll up"}
-9. {"action": "type", "target": "3", "text": "search query", "clear_first": false, "submit": true, "reason": "Type text into search bar and search"}
-10. {"action": "launch_app", "package": "com.google.android.youtube", "reason": "Launch app by package or name"}
-11. {"action": "open_url", "url": "https://example.com", "reason": "Open web link"}
-12. {"action": "key_home", "reason": "Press Home"}
-13. {"action": "key_back", "reason": "Press Back"}
-14. {"action": "key_recents", "reason": "Open recent apps"}
-15. {"action": "open_notifications", "reason": "Open notifications"}
-16. {"action": "wait", "seconds": 2, "reason": "Wait for loading"}
-17. {"action": "take_over", "reason": "Ask human user to solve biometric / OTP / CAPTCHA"}
-18. {"action": "finish", "text": "Summary of what was accomplished"}
+SELF-CONTAINED DIRECT ACTIONS (Instant 1-step completion — use these when applicable!):
+- {"action": "play_youtube", "query": "lofi music", "reason": "Open YouTube and search query"}
+- {"action": "play_music", "query": "song name", "app": "spotify|youtube", "reason": "Search and play music"}
+- {"action": "open_settings", "section": "storage|wifi|bluetooth|battery|apps|display|sound|date", "reason": "Directly jump to settings section"}
+- {"action": "open_url", "url": "https://example.com", "reason": "Open web link"}
+- {"action": "media_control", "command": "pause|play|next|prev|volume", "level": 60, "reason": "Control playback"}
+
+IN-APP UI AUTOMATION ACTIONS:
+- {"action": "tap", "target": "3", "reason": "Click element [3]"} (PREFERRED: target by index)
+- {"action": "tap", "target": "Battery", "reason": "Click element by text label"}
+- {"action": "tap", "x": 540, "y": 960, "reason": "Tap exact coordinates"}
+- {"action": "double_tap", "x": 540, "y": 960, "reason": "Double tap"}
+- {"action": "long_press", "x": 540, "y": 960, "duration_ms": 1000, "reason": "Long press"}
+- {"action": "swipe", "startX": 540, "startY": 1500, "endX": 540, "endY": 400, "reason": "Swipe feed"}
+- {"action": "scroll_down", "reason": "Scroll down"}
+- {"action": "scroll_up", "reason": "Scroll up"}
+- {"action": "type", "target": "3", "text": "search query", "clear_first": false, "submit": true, "reason": "Type text into search bar and search"}
+- {"action": "press_enter", "reason": "Submit search form"}
+- {"action": "launch_app", "package": "com.google.android.youtube", "reason": "Launch app by package or name"}
+- {"action": "key_home", "reason": "Press Home"}
+- {"action": "key_back", "reason": "Press Back"}
+- {"action": "key_recents", "reason": "Open recent apps"}
+- {"action": "open_notifications", "reason": "Open notifications"}
+- {"action": "wait", "seconds": 2, "reason": "Wait for loading"}
+- {"action": "take_over", "reason": "Ask human user to solve biometric / OTP / CAPTCHA"}
+- {"action": "finish", "text": "Summary of what was accomplished"}
 
 Optional: You can include "plan": [{"content": "step description", "status": "pending|in_progress|completed"}] to update your dynamic plan.
 
 Rules:
-- Target elements using the [index] identifier or direct visible label from the screen elements list.
-- When typing into search inputs, include "target": "[index]" and "submit": true to automatically focus and trigger search.
+- If the user asks to search/play on YouTube, use play_youtube (1 step).
+- If the user asks to check storage/wifi/battery in Settings, use open_settings (1 step).
+- When targeting on-screen elements, use "target": "[index]" from the interactive elements list.
 - When the goal is completed, output action "finish".
 - Always output valid JSON or XML format.
 """.trimIndent()
@@ -317,7 +325,7 @@ Determine the single next action to take.
 
                     // Settle delay based on action type
                     val settleMs = when (parsedAction.actionName) {
-                        "launch_app" -> 1400L
+                        "launch_app", "play_youtube", "play_music", "open_settings" -> 1400L
                         "tap", "click" -> 600L
                         "type", "input" -> 500L
                         "swipe", "scroll_down", "scroll_up" -> 600L
@@ -408,6 +416,31 @@ Determine the single next action to take.
     private suspend fun executeAction(action: ParsedLlmAction): String {
         return withContext(Dispatchers.Main) {
             when (action.actionName) {
+                // Self-contained direct actions (OpenDroid style)
+                "play_youtube" -> {
+                    val query = action.text.ifBlank { action.target }.ifBlank { action.rawParameters["query"] }.orEmpty()
+                    val ok = phoneController.playYoutube(query)
+                    "Played YouTube search for \"$query\" [Success: $ok]"
+                }
+                "play_music" -> {
+                    val query = action.text.ifBlank { action.target }.ifBlank { action.rawParameters["query"] }.orEmpty()
+                    val app = action.rawParameters["app"] ?: "spotify"
+                    val ok = phoneController.playMusic(query, app)
+                    "Played $app music for \"$query\" [Success: $ok]"
+                }
+                "open_settings" -> {
+                    val section = action.target.ifBlank { action.text }.ifBlank { action.rawParameters["section"] }.ifBlank { "storage" }
+                    val ok = phoneController.openSettingsSection(section)
+                    "Opened Settings: $section [Success: $ok]"
+                }
+                "media_control" -> {
+                    val cmd = action.target.ifBlank { action.rawParameters["command"] }.ifBlank { "play" }
+                    val lvl = action.rawParameters["level"]?.toIntOrNull()
+                    val ok = phoneController.mediaControl(cmd, lvl)
+                    "Dispatched media control $cmd [Success: $ok]"
+                }
+
+                // In-app UI Automation
                 "tap", "click" -> {
                     if (action.target.isNotBlank()) {
                         val ok = phoneController.clickElement(action.target)
@@ -474,6 +507,10 @@ Determine the single next action to take.
                         submit = submit
                     )
                     "Entered \"$textToType\" ${if (target != null) "into \"$target\"" else ""} [Success: $ok]"
+                }
+                "press_enter" -> {
+                    val ok = phoneController.pressEnter()
+                    "Dispatched Enter / Search action [Success: $ok]"
                 }
                 "launch_app" -> {
                     val app = action.packageName.ifBlank { action.target }.ifBlank { action.text }

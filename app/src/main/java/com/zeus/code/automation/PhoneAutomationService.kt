@@ -12,6 +12,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -88,6 +89,10 @@ class PhoneAutomationService : AccessibilityService() {
 
         val isConnected: Boolean
             get() = instance != null
+
+        private val IME_SUBMIT_LABELS = listOf("search", "go", "send", "done", "submit", "ok", "enter")
+        private const val RETRY_TIMEOUT_MS = 3500L
+        private const val RETRY_INTERVAL_MS = 250L
     }
 
     var currentPackageName: String = ""
@@ -123,6 +128,18 @@ class PhoneAutomationService : AccessibilityService() {
     override fun onDestroy() {
         super.onDestroy()
         instance = null
+    }
+
+    /**
+     * Helper to poll until a condition succeeds or timeout elapses (OpenDroid / GenericAppAutomator style)
+     */
+    suspend fun retryUntilTimeout(timeoutMs: Long = RETRY_TIMEOUT_MS, attempt: suspend () -> Boolean): Boolean {
+        val deadline = SystemClock.elapsedRealtime() + timeoutMs
+        while (true) {
+            if (attempt()) return true
+            if (SystemClock.elapsedRealtime() >= deadline) return false
+            delay(RETRY_INTERVAL_MS)
+        }
     }
 
     /**
@@ -166,7 +183,7 @@ class PhoneAutomationService : AccessibilityService() {
         val rect = Rect()
         node.getBoundsInScreen(rect)
 
-        // Ignore nodes completely outside the screen
+        // Ignore nodes completely outside screen
         if (rect.right <= 0 || rect.bottom <= 0 || rect.left >= screenRect.right || rect.top >= screenRect.bottom) {
             for (i in 0 until node.childCount) {
                 traverseNode(node.getChild(i), out, depth + 1, parentClickable, parentBounds, screenRect)
@@ -346,45 +363,79 @@ class PhoneAutomationService : AccessibilityService() {
     } ?: false
 
     /**
-     * Robust Element Clicker: tries direct Accessibility Action first,
-     * then falls back to clicking parent, then physical touch gesture on element center.
+     * High-reliability Element Clicker with active polling (OpenDroid / GenericAppAutomator style).
+     * Tries direct Accessibility Action on node or nearest clickable parent,
+     * with fallback to center-coordinate gesture.
      */
     suspend fun clickElement(
         index: Int? = null,
         targetText: String? = null,
         resourceId: String? = null
     ): Boolean = withContext(Dispatchers.Main) {
-        val root = rootInActiveWindow ?: return@withContext false
-        val nodes = dumpVisibleNodes()
+        retryUntilTimeout(timeoutMs = 3000L) {
+            val root = rootInActiveWindow ?: return@retryUntilTimeout false
+            val nodes = dumpVisibleNodes()
 
-        val targetElement = when {
-            index != null && index >= 0 && index < nodes.size -> nodes[index]
-            !targetText.isNullOrBlank() -> {
-                val lower = targetText.lowercase(Locale.ROOT).trim()
-                nodes.firstOrNull { it.text.equals(targetText, ignoreCase = true) || it.contentDescription.equals(targetText, ignoreCase = true) }
-                    ?: nodes.firstOrNull { it.text.lowercase(Locale.ROOT).contains(lower) || it.contentDescription.lowercase(Locale.ROOT).contains(lower) }
+            val targetElement = when {
+                index != null && index >= 0 && index < nodes.size -> nodes[index]
+                !targetText.isNullOrBlank() -> {
+                    val lower = targetText.lowercase(Locale.ROOT).trim()
+                    nodes.firstOrNull { it.text.equals(targetText, ignoreCase = true) || it.contentDescription.equals(targetText, ignoreCase = true) }
+                        ?: nodes.firstOrNull { it.text.lowercase(Locale.ROOT).contains(lower) || it.contentDescription.lowercase(Locale.ROOT).contains(lower) }
+                }
+                !resourceId.isNullOrBlank() -> {
+                    nodes.firstOrNull { it.resourceId.contains(resourceId, ignoreCase = true) }
+                }
+                else -> null
             }
-            !resourceId.isNullOrBlank() -> {
-                nodes.firstOrNull { it.resourceId.contains(resourceId, ignoreCase = true) }
+
+            if (targetElement != null) {
+                // 1. Direct Node Action
+                val node = findNodeMatching(root, targetElement)
+                if (node != null) {
+                    val clicked = performClickOnNodeOrParent(node)
+                    if (clicked) return@retryUntilTimeout true
+                }
+
+                // 2. Physical Touch gesture at center coordinates
+                val cx = targetElement.centerX.toFloat()
+                val cy = targetElement.centerY.toFloat()
+                return@retryUntilTimeout clickCoordinate(cx, cy)
             }
-            else -> null
+
+            // Fallback: search whole accessibility tree for text
+            if (!targetText.isNullOrBlank()) {
+                val matchingNodes = root.findAccessibilityNodeInfosByText(targetText)
+                if (!matchingNodes.isNullOrEmpty()) {
+                    for (match in matchingNodes) {
+                        if (match.isVisibleToUser) {
+                            val rect = Rect()
+                            match.getBoundsInScreen(rect)
+                            if (rect.width() > 0 && rect.height() > 0) {
+                                val clicked = performClickOnNodeOrParent(match)
+                                if (clicked) return@retryUntilTimeout true
+                                return@retryUntilTimeout clickCoordinate(rect.centerX().toFloat(), rect.centerY().toFloat())
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Fallback: search view ID
+            if (!resourceId.isNullOrBlank()) {
+                val idNodes = root.findAccessibilityNodeInfosByViewId(resourceId)
+                if (!idNodes.isNullOrEmpty()) {
+                    for (match in idNodes) {
+                        if (match.isVisibleToUser) {
+                            val clicked = performClickOnNodeOrParent(match)
+                            if (clicked) return@retryUntilTimeout true
+                        }
+                    }
+                }
+            }
+
+            false
         }
-
-        if (targetElement != null) {
-            // Find corresponding node
-            val node = findNodeMatching(root, targetElement)
-            if (node != null) {
-                val clickedDirectly = performClickOnNodeOrParent(node)
-                if (clickedDirectly) return@withContext true
-            }
-
-            // Fallback: Physical Touch gesture at center coordinates
-            val cx = targetElement.centerX.toFloat()
-            val cy = targetElement.centerY.toFloat()
-            return@withContext clickCoordinate(cx, cy)
-        }
-
-        false
     }
 
     private fun findNodeMatching(root: AccessibilityNodeInfo, element: UiElementNode): AccessibilityNodeInfo? {
@@ -413,8 +464,41 @@ class PhoneAutomationService : AccessibilityService() {
     }
 
     /**
-     * Sets text into target element or currently focused field.
-     * Automatically clicks and focuses the field if not already active!
+     * Performs scroll on active scrollable container with fallback to touch swipe.
+     */
+    suspend fun performScroll(forward: Boolean): Boolean = withContext(Dispatchers.Main) {
+        val root = rootInActiveWindow
+        val action = if (forward) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
+        if (root != null) {
+            val scrolled = performScrollOnNode(root, action)
+            if (scrolled) return@withContext true
+        }
+
+        // Fallback: Touch gesture scroll
+        val metrics = resources.displayMetrics
+        val cx = metrics.widthPixels * 0.5f
+        return@withContext if (forward) {
+            swipe(cx, metrics.heightPixels * 0.72f, cx, metrics.heightPixels * 0.28f, 300L)
+        } else {
+            swipe(cx, metrics.heightPixels * 0.28f, cx, metrics.heightPixels * 0.72f, 300L)
+        }
+    }
+
+    private fun performScrollOnNode(node: AccessibilityNodeInfo, action: Int): Boolean {
+        if (node.isScrollable) {
+            return node.performAction(action)
+        }
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            if (performScrollOnNode(child, action)) {
+                return true
+            }
+        }
+        return false
+    }
+
+    /**
+     * High-reliability Text Input with auto-focusing, IME Enter action, and submit fallback (OpenDroid style).
      */
     suspend fun inputText(
         targetIndex: Int? = null,
@@ -423,65 +507,125 @@ class PhoneAutomationService : AccessibilityService() {
         clearFirst: Boolean = false,
         submit: Boolean = true
     ): Boolean = withContext(Dispatchers.Main) {
-        val root = rootInActiveWindow ?: return@withContext false
-
-        // 1. If target element specified, click it first to open keyboard / input focus
+        // 1. If target element specified, click it first to activate the field and bring up the keyboard
         if (targetIndex != null || !targetText.isNullOrBlank()) {
             clickElement(index = targetIndex, targetText = targetText)
             delay(350)
         }
 
-        // 2. Find focused or editable node
-        var focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-            ?: root.findFocus(AccessibilityNodeInfo.FOCUS_ACCESSIBILITY)
-            ?: findFirstEditableNode(root)
+        // 2. Poll until focused or editable node is ready
+        var success = retryUntilTimeout(timeoutMs = 3000L) {
+            var root = rootInActiveWindow ?: return@retryUntilTimeout false
 
-        if (focused == null) {
-            // Try tapping top search area if no edit focus
-            val nodes = dumpVisibleNodes()
-            val searchNode = nodes.firstOrNull {
-                it.isEditable || it.className.contains("EditText", ignoreCase = true) ||
-                    it.text.contains("search", ignoreCase = true) || it.contentDescription.contains("search", ignoreCase = true)
-            }
-            if (searchNode != null) {
-                clickCoordinate(searchNode.centerX.toFloat(), searchNode.centerY.toFloat())
-                delay(400)
-                val refreshedRoot = rootInActiveWindow
-                focused = refreshedRoot?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-                    ?: findFirstEditableNode(refreshedRoot)
-            }
-        }
+            var focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+                ?: root.findFocus(AccessibilityNodeInfo.FOCUS_ACCESSIBILITY)
+                ?: findFirstEditableNode(root)
 
-        if (focused != null) {
-            focused.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
-            val finalText = if (clearFirst) textToType else {
-                val current = focused.text?.toString().orEmpty()
-                if (current.isNotBlank()) "$current$textToType" else textToType
-            }
-
-            val args = Bundle().apply {
-                putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, finalText)
-            }
-            var success = focused.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
-
-            if (!success) {
-                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                if (clipboard != null) {
-                    clipboard.setPrimaryClip(ClipData.newPlainText("zeus_input", finalText))
-                    success = focused.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+            if (focused == null) {
+                val nodes = dumpVisibleNodes()
+                val candidate = nodes.firstOrNull {
+                    it.isEditable || it.className.contains("EditText", ignoreCase = true) ||
+                        it.text.contains("Search", ignoreCase = true) || it.contentDescription.contains("Search", ignoreCase = true) ||
+                        it.resourceId.contains("search", ignoreCase = true) || it.resourceId.contains("query", ignoreCase = true)
+                }
+                if (candidate != null) {
+                    clickCoordinate(candidate.centerX.toFloat(), candidate.centerY.toFloat())
+                    delay(300)
+                    root = rootInActiveWindow ?: return@retryUntilTimeout false
+                    focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: findFirstEditableNode(root)
                 }
             }
 
-            if (submit) {
-                delay(200)
-                // Trigger submit by clicking search action or Enter
-                focused.performAction(AccessibilityNodeInfo.ACTION_NEXT_AT_MOVEMENT_GRANULARITY)
+            if (focused != null) {
+                focused.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+
+                if (clearFirst) {
+                    val clearArgs = Bundle().apply {
+                        putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "")
+                    }
+                    focused.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, clearArgs)
+                    delay(80)
+                }
+
+                val currentText = if (clearFirst) "" else focused.text?.toString().orEmpty()
+                val textToApply = if (currentText.isNotBlank()) "$currentText$textToType" else textToType
+
+                val args = Bundle().apply {
+                    putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, textToApply)
+                }
+                var applied = focused.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+
+                // Clipboard fallback
+                if (!applied) {
+                    val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                    if (clipboard != null) {
+                        clipboard.setPrimaryClip(ClipData.newPlainText("zeus_input", textToApply))
+                        applied = focused.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+                    }
+                }
+
+                return@retryUntilTimeout applied
             }
 
-            return@withContext success
+            false
         }
 
-        false
+        // 3. If submit requested, trigger IME Enter / Search action (OpenDroid style)
+        if (success && submit) {
+            delay(250)
+            performImeEnter()
+        }
+
+        success
+    }
+
+    /**
+     * Performs the IME 'enter/search/go' action on the currently focused editable field (OpenDroid style).
+     * Uses AccessibilityNodeInfo.ACTION_IME_ENTER on API 30+; on older APIs or fallback, finds submit controls.
+     */
+    fun performImeEnter(): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+        var submitted = false
+
+        if (focused != null) {
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    submitted = focused.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
+                }
+            } catch (_: Exception) {
+            }
+        }
+
+        if (!submitted) {
+            submitted = findAndClickSubmitControl(root, IME_SUBMIT_LABELS)
+        }
+
+        return submitted
+    }
+
+    private fun findAndClickSubmitControl(node: AccessibilityNodeInfo?, labels: List<String>): Boolean {
+        if (node == null) return false
+        val text = node.text?.toString()?.lowercase(Locale.ROOT)
+        val desc = node.contentDescription?.toString()?.lowercase(Locale.ROOT)
+        val id = node.viewIdResourceName?.lowercase(Locale.ROOT)
+
+        val matches = (text != null && labels.any { text.contains(it) }) ||
+            (desc != null && labels.any { desc.contains(it) }) ||
+            (id != null && (id.contains("search") || id.contains("submit") || id.contains("send") || id.contains("go")))
+
+        if (matches && (node.isClickable || node.parent?.isClickable == true)) {
+            val clicked = performClickOnNodeOrParent(node)
+            if (clicked) return true
+        }
+
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            if (findAndClickSubmitControl(child, labels)) {
+                return true
+            }
+        }
+        return false
     }
 
     private fun findFirstEditableNode(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {

@@ -5,16 +5,22 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
+import android.os.SystemClock
+import android.provider.MediaStore
 import android.provider.Settings
 import android.util.DisplayMetrics
+import android.view.KeyEvent
 import android.view.WindowManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 import java.util.Locale
 
 data class PhoneTaskLog(
@@ -93,7 +99,139 @@ class PhoneController(private val context: Context) {
         return metrics
     }
 
-    // ==================== GLOBAL KEYS & ACTIONS ====================
+    // ==================== SELF-CONTAINED ACTIONS (OpenDroid style) ====================
+
+    /**
+     * Directly plays / searches on YouTube in 1 step without fragile multi-tap steps.
+     */
+    fun playYoutube(query: String): Boolean {
+        return try {
+            val encQuery = URLEncoder.encode(query, StandardCharsets.UTF_8.toString())
+            val uri = Uri.parse("https://www.youtube.com/results?search_query=$encQuery")
+            val intent = Intent(Intent.ACTION_VIEW, uri).apply {
+                setPackage("com.google.android.youtube")
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            if (intent.resolveActivity(context.packageManager) != null) {
+                context.startActivity(intent)
+                addLog("PLAY_YOUTUBE", "Opened YouTube search for: \"$query\"", true)
+                true
+            } else {
+                val browserIntent = Intent(Intent.ACTION_VIEW, uri).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                context.startActivity(browserIntent)
+                addLog("PLAY_YOUTUBE", "Opened YouTube search in browser for: \"$query\"", true)
+                true
+            }
+        } catch (e: Exception) {
+            addLog("PLAY_YOUTUBE", "Failed to open YouTube: ${e.message}", false)
+            false
+        }
+    }
+
+    /**
+     * Directly searches / plays music on Spotify or YouTube Music in 1 step.
+     */
+    fun playMusic(query: String, app: String = "spotify"): Boolean {
+        return try {
+            val encQuery = URLEncoder.encode(query, StandardCharsets.UTF_8.toString())
+            val intent = when (app.lowercase(Locale.ROOT)) {
+                "spotify" -> Intent(Intent.ACTION_VIEW, Uri.parse("spotify:search:$encQuery")).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                "youtube", "yt_music" -> Intent(Intent.ACTION_VIEW, Uri.parse("https://music.youtube.com/search?q=$encQuery")).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                else -> Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH).apply {
+                    putExtra(MediaStore.EXTRA_MEDIA_FOCUS, MediaStore.Audio.Media.ENTRY_CONTENT_TYPE)
+                    putExtra(MediaStore.EXTRA_MEDIA_TITLE, query)
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+            }
+            if (intent.resolveActivity(context.packageManager) != null) {
+                context.startActivity(intent)
+                addLog("PLAY_MUSIC", "Opened $app search for: \"$query\"", true)
+                true
+            } else {
+                playYoutube(query)
+            }
+        } catch (e: Exception) {
+            addLog("PLAY_MUSIC", "Failed to play music: ${e.message}", false)
+            false
+        }
+    }
+
+    /**
+     * Directly opens specific Android settings subpages in 1 step (Storage, Wi-Fi, Bluetooth, Battery, etc.).
+     */
+    fun openSettingsSection(section: String): Boolean {
+        val action = when (section.trim().lowercase(Locale.ROOT)) {
+            "storage", "internal_storage", "disk" -> Settings.ACTION_INTERNAL_STORAGE_SETTINGS
+            "wifi", "wi-fi", "wireless", "network" -> Settings.ACTION_WIFI_SETTINGS
+            "bluetooth", "bt" -> Settings.ACTION_BLUETOOTH_SETTINGS
+            "battery", "power", "battery_saver" -> Settings.ACTION_BATTERY_SAVER_SETTINGS
+            "apps", "applications", "installed_apps" -> Settings.ACTION_APPLICATION_SETTINGS
+            "display", "screen", "brightness" -> Settings.ACTION_DISPLAY_SETTINGS
+            "sound", "volume", "audio" -> Settings.ACTION_SOUND_SETTINGS
+            "accessibility" -> Settings.ACTION_ACCESSIBILITY_SETTINGS
+            "date", "time", "datetime" -> Settings.ACTION_DATE_SETTINGS
+            "location", "gps" -> Settings.ACTION_LOCATION_SOURCE_SETTINGS
+            else -> Settings.ACTION_SETTINGS
+        }
+        return try {
+            val intent = Intent(action).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(intent)
+            addLog("OPEN_SETTINGS", "Opened Settings ($section)", true)
+            true
+        } catch (_: Exception) {
+            val fallback = Intent(Settings.ACTION_SETTINGS).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(fallback)
+            addLog("OPEN_SETTINGS", "Opened Settings main page", true)
+            true
+        }
+    }
+
+    /**
+     * Controls playback and system volume via AudioManager.
+     */
+    fun mediaControl(command: String, volumePercent: Int? = null): Boolean {
+        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        return try {
+            when (command.lowercase(Locale.ROOT)) {
+                "pause" -> sendMediaKeyEvent(KeyEvent.KEYCODE_MEDIA_PAUSE)
+                "play", "resume" -> sendMediaKeyEvent(KeyEvent.KEYCODE_MEDIA_PLAY)
+                "next", "skip" -> sendMediaKeyEvent(KeyEvent.KEYCODE_MEDIA_NEXT)
+                "previous", "prev" -> sendMediaKeyEvent(KeyEvent.KEYCODE_MEDIA_PREVIOUS)
+                "volume", "set_volume" -> {
+                    val level = volumePercent ?: 50
+                    val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+                    val targetVolume = (level * maxVolume) / 100
+                    audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, targetVolume, AudioManager.FLAG_SHOW_UI)
+                }
+            }
+            addLog("MEDIA_CONTROL", "Executed media command: $command", true)
+            true
+        } catch (e: Exception) {
+            addLog("MEDIA_CONTROL", "Failed media control: ${e.message}", false)
+            false
+        }
+    }
+
+    private fun sendMediaKeyEvent(keyCode: Int) {
+        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val eventTime = SystemClock.uptimeMillis()
+        val downEvent = KeyEvent(eventTime, eventTime, KeyEvent.ACTION_DOWN, keyCode, 0)
+        audioManager.dispatchMediaKeyEvent(downEvent)
+        val upEvent = KeyEvent(eventTime, eventTime, KeyEvent.ACTION_UP, keyCode, 0)
+        audioManager.dispatchMediaKeyEvent(upEvent)
+    }
+
+    // ==================== GLOBAL KEYS & NAVIGATION ====================
 
     suspend fun pressHome(): Boolean = withContext(Dispatchers.Main) {
         val service = PhoneAutomationService.instance ?: return@withContext false
@@ -161,7 +299,7 @@ class PhoneController(private val context: Context) {
         bitmap
     }
 
-    // ==================== TOUCH & GESTURES ====================
+    // ==================== IN-APP AUTOMATION: GESTURES & ACTIONS ====================
 
     suspend fun tapCoordinates(x: Float, y: Float): Boolean = withContext(Dispatchers.Main) {
         val service = PhoneAutomationService.instance ?: return@withContext false
@@ -211,39 +349,35 @@ class PhoneController(private val context: Context) {
         success
     }
 
-    suspend fun scrollDown(): Boolean {
-        val metrics = getDisplayMetrics()
-        val cx = metrics.widthPixels * 0.5f
-        val startY = metrics.heightPixels * 0.72f
-        val endY = metrics.heightPixels * 0.28f
-        return swipe(cx, startY, cx, endY, 300L)
+    suspend fun scrollDown(): Boolean = withContext(Dispatchers.Main) {
+        val service = PhoneAutomationService.instance ?: return@withContext false
+        val success = service.performScroll(forward = true)
+        addLog("SCROLL", "Scrolled down", success)
+        success
     }
 
-    suspend fun scrollUp(): Boolean {
-        val metrics = getDisplayMetrics()
-        val cx = metrics.widthPixels * 0.5f
-        val startY = metrics.heightPixels * 0.28f
-        val endY = metrics.heightPixels * 0.72f
-        return swipe(cx, startY, cx, endY, 300L)
+    suspend fun scrollUp(): Boolean = withContext(Dispatchers.Main) {
+        val service = PhoneAutomationService.instance ?: return@withContext false
+        val success = service.performScroll(forward = false)
+        addLog("SCROLL", "Scrolled up", success)
+        success
     }
 
-    suspend fun scrollLeft(): Boolean {
+    suspend fun scrollLeft(): Boolean = withContext(Dispatchers.Main) {
         val metrics = getDisplayMetrics()
         val cy = metrics.heightPixels * 0.5f
         val startX = metrics.widthPixels * 0.85f
         val endX = metrics.widthPixels * 0.15f
-        return swipe(startX, cy, endX, cy, 300L)
+        swipe(startX, cy, endX, cy, 300L)
     }
 
-    suspend fun scrollRight(): Boolean {
+    suspend fun scrollRight(): Boolean = withContext(Dispatchers.Main) {
         val metrics = getDisplayMetrics()
         val cy = metrics.heightPixels * 0.5f
         val startX = metrics.widthPixels * 0.15f
         val endX = metrics.widthPixels * 0.85f
-        return swipe(startX, cy, endX, cy, 300L)
+        swipe(startX, cy, endX, cy, 300L)
     }
-
-    // ==================== ELEMENT TARGETING & ACTIONS ====================
 
     suspend fun clickElement(target: String): Boolean = withContext(Dispatchers.Main) {
         val service = PhoneAutomationService.instance ?: return@withContext false
@@ -294,6 +428,13 @@ class PhoneController(private val context: Context) {
         )
         addLog("TYPE", "Entered text \"$text\" into ${target ?: "focused field"} - Success: $success", success)
         success
+    }
+
+    fun pressEnter(): Boolean {
+        val service = PhoneAutomationService.instance ?: return false
+        val success = service.performImeEnter()
+        addLog("PRESS_ENTER", "Dispatched IME enter/search action", success)
+        return success
     }
 
     // ==================== SCREEN INSPECTION ====================
@@ -392,8 +533,6 @@ class PhoneController(private val context: Context) {
     }
 
     private fun resolveCoordinate(value: Float, maxDimension: Int): Float {
-        // If coordinate is in normalized 0.0..1.0 range, scale to pixels.
-        // If it's already in absolute pixel coordinates (e.g. 540, 1920), keep it as pixels!
         return when {
             value in 0.0001f..1.0f -> value * maxDimension
             else -> value.coerceIn(0f, maxDimension.toFloat())
