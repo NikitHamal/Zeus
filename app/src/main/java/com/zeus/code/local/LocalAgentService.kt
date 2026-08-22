@@ -204,13 +204,14 @@ class LocalAgentService : Service() {
 
     private suspend fun onEngineEvent(taskId: String, kind: String, text: String) {
         val current = LocalTaskStore.get(taskId) ?: return
-        LocalTaskStore.appendEvent(
-            current,
-            LocalEvent(
-                id = LocalTaskStore.nextEventId(current),
-                at = System.currentTimeMillis(),
-                kind = kind,
-                text = text
+        LocalTaskStore.save(
+            current.copy(
+                events = current.events + LocalEvent(
+                    id = LocalTaskStore.nextEventId(current),
+                    at = System.currentTimeMillis(),
+                    kind = kind,
+                    text = text
+                )
             )
         )
         when (kind) {

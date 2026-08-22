@@ -494,7 +494,7 @@ private fun LocalTaskCard(task: LocalTask, viewModel: LocalAgentViewModel) {
 }
 
 @Composable
-private fun LocalStatusChip(status: String) {
+internal fun LocalStatusChip(status: String) {
     val (container, content) = when (status) {
         LocalTaskStatus.RUNNING -> MaterialTheme.colorScheme.primaryContainer to MaterialTheme.colorScheme.onPrimaryContainer
         LocalTaskStatus.COMPLETED -> MaterialTheme.colorScheme.tertiaryContainer to MaterialTheme.colorScheme.onTertiaryContainer
