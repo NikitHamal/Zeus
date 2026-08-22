@@ -31,8 +31,6 @@ data class LocalAgentUiState(
     val booting: Boolean = true,
     val busy: Boolean = false,
     val message: String? = null,
-    val tasks: List<LocalTask> = emptyList(),
-    val selectedTaskId: String? = null,
     val workspaces: List<Workspace> = emptyList(),
     val workspaceQuery: String = "",
     val selectedWorkspace: Workspace? = null,
@@ -44,12 +42,16 @@ data class LocalAgentUiState(
     val customProviders: List<com.zeus.code.local.LocalCustomProvider> = emptyList(),
     val customKeyMasks: Map<String, String> = emptyMap(),
     val selection: LocalModelChoice = LocalModelChoice(),
-    val maxSteps: Int = 40
+    /** Path of the workspace picked as the target for the next local task. */
+    val selectedWorkspacePath: String = ""
 ) {
     val filteredWorkspaces: List<Workspace>
         get() = workspaces.filter {
             workspaceQuery.isBlank() || it.name.contains(workspaceQuery, ignoreCase = true)
         }
+
+    val selectedWorkspace: Workspace?
+        get() = workspaces.firstOrNull { it.path == selectedWorkspacePath }
 
     val hasAnyProvider: Boolean
         get() = nebiansConnected || zenKeyMasked.isNotBlank() || customProviders.isNotEmpty()
@@ -59,7 +61,7 @@ class LocalAgentViewModel(application: Application) : AndroidViewModel(applicati
 
     companion object {
         private const val PREF_CHOICE = "selected_choice"
-        private const val PREF_MAX_STEPS = "max_steps"
+        private const val PREF_WORKSPACE = "selected_workspace"
     }
 
     private val prefs = application.getSharedPreferences("zeus_local_agent", android.content.Context.MODE_PRIVATE)
@@ -87,16 +89,6 @@ class LocalAgentViewModel(application: Application) : AndroidViewModel(applicati
             LocalTaskStore.recoverOrphans()
             restoreSelection()
             _state.update { it.copy(booting = false) }
-            launch {
-                LocalTaskStore.tasks.collect { tasks ->
-                    _state.update { current ->
-                        current.copy(
-                            tasks = tasks,
-                            selectedTaskId = current.selectedTaskId?.takeIf { id -> tasks.any { it.id == id } }
-                        )
-                    }
-                }
-            }
             refreshWorkspaces()
             loadNebiansCatalogQuietly()
         }
@@ -115,30 +107,19 @@ class LocalAgentViewModel(application: Application) : AndroidViewModel(applicati
     private suspend fun refreshWorkspaces() {
         val workspaces = runCatching { workspaceManager.list() }.getOrDefault(emptyList())
         _state.update { current ->
-            current.copy(
-                workspaces = workspaces,
-                selectedWorkspace = current.selectedWorkspace?.let { selected ->
-                    workspaces.firstOrNull { it.path == selected.path }
-                } ?: current.selectedWorkspace
-            )
+            current.copy(workspaces = workspaces)
         }
     }
 
     fun setWorkspaceQuery(value: String) = _state.update { it.copy(workspaceQuery = value) }
 
-    fun selectWorkspace(workspace: Workspace?) = _state.update { it.copy(selectedWorkspace = workspace) }
+    fun selectWorkspace(workspace: Workspace?) {
+        val path = workspace?.path.orEmpty()
+        prefs.edit().putString(PREF_WORKSPACE, path).apply()
+        _state.update { it.copy(selectedWorkspacePath = path) }
+    }
 
     fun dismissMessage() = _state.update { it.copy(message = null) }
-
-    fun openTask(taskId: String) = _state.update { it.copy(selectedTaskId = taskId, message = null) }
-
-    fun closeTask() = _state.update { it.copy(selectedTaskId = null) }
-
-    fun setMaxSteps(value: Int) {
-        val coerced = value.coerceIn(5, 120)
-        prefs.edit().putInt(PREF_MAX_STEPS, coerced).apply()
-        _state.update { it.copy(maxSteps = coerced) }
-    }
 
     // ------------------------------------------------------------------
     // Model selection
@@ -157,7 +138,7 @@ class LocalAgentViewModel(application: Application) : AndroidViewModel(applicati
         _state.update {
             it.copy(
                 selection = saved ?: LocalModelChoice(),
-                maxSteps = prefs.getInt(PREF_MAX_STEPS, 40),
+                selectedWorkspacePath = prefs.getString(PREF_WORKSPACE, "").orEmpty(),
                 zenKeyMasked = providerStore.zenKeyMasked(),
                 customProviders = providerStore.customProviders(),
                 customKeyMasks = providerStore.customProviders().associate { p -> p.id to providerStore.customKeyMasked(p.id) },
@@ -186,10 +167,17 @@ class LocalAgentViewModel(application: Application) : AndroidViewModel(applicati
     // Task lifecycle
     // ------------------------------------------------------------------
 
-    fun startTask(goal: String, onStarted: (() -> Unit)? = null) = task("Queueing local task…") {
+    fun startTask(
+        goal: String,
+        workspaces: List<Workspace> = emptyList(),
+        onStarted: (() -> Unit)? = null
+    ) = task("Queueing local task…") {
         val context = getApplication<Application>()
-        val workspace = _state.value.selectedWorkspace
-            ?: error("Choose a workspace first.")
+        val candidates = workspaces.ifEmpty { _state.value.workspaces }
+        val workspace = candidates.firstOrNull { it.path == _state.value.selectedWorkspacePath }
+            ?: _state.value.selectedWorkspace
+            ?: error("Choose a project first.")
+        selectWorkspace(workspace)
         val choice = _state.value.selection
         check(choice.isValid) { "Pick a model before starting." }
         check(goal.trim().length >= 10) { "Describe the change in at least 10 characters." }
@@ -202,7 +190,6 @@ class LocalAgentViewModel(application: Application) : AndroidViewModel(applicati
             goal = goal.trim(),
             status = LocalTaskStatus.QUEUED,
             choice = choice,
-            maxSteps = _state.value.maxSteps,
             createdAt = System.currentTimeMillis(),
             updatedAt = System.currentTimeMillis(),
             workBranch = suggestedBranch(goal)
@@ -248,42 +235,6 @@ class LocalAgentViewModel(application: Application) : AndroidViewModel(applicati
                 }
             }
         }
-    }
-
-    fun stopSelectedTask() = task("Stopping…") {
-        val id = _state.value.selectedTaskId ?: return@task
-        com.zeus.code.local.LocalAgentService.stopCurrent(getApplication())
-        LocalTaskStore.get(id)?.let { current ->
-            if (current.status == LocalTaskStatus.QUEUED) {
-                LocalTaskStore.save(current.copy(status = LocalTaskStatus.STOPPED))
-            }
-        }
-    }
-
-    fun retryTask(taskId: String) = task("Re-queueing task…") {
-        val current = LocalTaskStore.get(taskId) ?: error("Task not found.")
-        require(!LocalTaskStatus.isActive(current.status)) { "Task is already active." }
-        LocalTaskStore.save(
-            current.copy(
-                status = LocalTaskStatus.QUEUED,
-                error = "",
-                summary = "",
-                steps = 0,
-                completedAt = 0L
-            )
-        )
-        com.zeus.code.local.LocalAgentService.enqueue(getApplication(), taskId)
-        toast("Task re-queued.")
-    }
-
-    fun deleteTask(taskId: String) = task(null) {
-        LocalTaskStore.delete(taskId)
-        if (_state.value.selectedTaskId == taskId) _state.update { it.copy(selectedTaskId = null) }
-    }
-
-    fun deleteFinished() = task(null) {
-        LocalTaskStore.deleteAllFinished()
-        toast("Cleared finished tasks.")
     }
 
     // ------------------------------------------------------------------

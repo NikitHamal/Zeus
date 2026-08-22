@@ -161,7 +161,6 @@ import com.zeus.code.model.Workspace
 import com.zeus.code.ui.agent.AgentUiState
 import com.zeus.code.ui.agent.BackgroundAgentScreen
 import com.zeus.code.ui.agent.BackgroundAgentViewModel
-import com.zeus.code.ui.local.LocalAgentScreen
 import com.zeus.code.ui.local.LocalAgentViewModel
 import com.zeus.code.ui.theme.ZeusGold
 import com.zeus.code.ui.theme.ZeusTheme
@@ -362,7 +361,6 @@ private fun MainShell(
     val standalone = standaloneTool != null ||
         route != WorkspaceRoute.List ||
         (tab == MainTab.AGENT && agentState.selectedSession != null) ||
-        (tab == MainTab.LOCAL && localState.selectedTaskId != null) ||
         (tab == MainTab.GITHUB && state.selectedRepo != null)
 
     // Hierarchical back handling for every sub-route.
@@ -372,12 +370,10 @@ private fun MainShell(
     BackHandler(enabled = route == WorkspaceRoute.Detail) { viewModel.closeWorkspace() }
     BackHandler(enabled = tab == MainTab.GITHUB && state.selectedRepo != null) { viewModel.closeRepository() }
     BackHandler(enabled = tab == MainTab.AGENT && agentState.selectedSession != null) { agentViewModel.closeSession() }
-    BackHandler(enabled = tab == MainTab.LOCAL && localState.selectedTaskId != null) { localAgentViewModel.closeTask() }
 
     val refreshAction: (() -> Unit)? = when {
         standaloneTool != null -> null
-        tab == MainTab.AGENT -> ({ agentViewModel.refresh() })
-        tab == MainTab.LOCAL -> ({ localAgentViewModel.refresh() })
+        tab == MainTab.AGENT -> ({ agentViewModel.refresh(); localAgentViewModel.refresh() })
         tab == MainTab.GITHUB && state.selectedRepo != null -> viewModel::refreshSelectedRepository
         tab == MainTab.GITHUB -> viewModel::refreshAccount
         tab == MainTab.WORKSPACES && route is WorkspaceRoute.Detail -> viewModel::refreshWorkspace
@@ -508,6 +504,7 @@ private fun MainShell(
                 else -> when (tab) {
                     MainTab.AGENT -> BackgroundAgentScreen(
                         viewModel = agentViewModel,
+                        localViewModel = localAgentViewModel,
                         workspaces = state.workspaces,
                         onOpenWorkspace = { workspace ->
                             viewModel.selectWorkspace(workspace)
@@ -516,15 +513,8 @@ private fun MainShell(
                         onCloneBranch = { url, name, branch ->
                             viewModel.cloneUrl(url, name, branch)
                             selectedTab = MainTab.WORKSPACES.name
-                        }
-                    )
-                    MainTab.LOCAL -> LocalAgentScreen(
-                        viewModel = localAgentViewModel,
-                        workspaces = state.workspaces,
-                        onOpenWorkspace = { workspace ->
-                            viewModel.selectWorkspace(workspace)
-                            selectedTab = MainTab.WORKSPACES.name
-                        }
+                        },
+                        onOpenWorkspacesTab = { selectedTab = MainTab.WORKSPACES.name }
                     )
                     MainTab.WORKSPACES -> when (route) {
                         is WorkspaceRoute.List -> WorkspaceListScreen(
@@ -2633,14 +2623,12 @@ private fun ConfirmDialog(
 
 private fun tabTitle(tab: MainTab) = when (tab) {
     MainTab.AGENT -> "Agent"
-    MainTab.LOCAL -> "Local"
     MainTab.WORKSPACES -> "Workspaces"
     MainTab.GITHUB -> "GitHub"
 }
 
 private fun tabIcon(tab: MainTab) = when (tab) {
     MainTab.AGENT -> Icons.Rounded.AutoAwesome
-    MainTab.LOCAL -> Icons.Rounded.Terminal
     MainTab.WORKSPACES -> Icons.Rounded.Folder
     MainTab.GITHUB -> Icons.Rounded.Source
 }

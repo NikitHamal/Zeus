@@ -98,7 +98,8 @@ data class LocalTask(
     val goal: String = "",
     val status: String = LocalTaskStatus.QUEUED,
     val choice: LocalModelChoice = LocalModelChoice(),
-    val maxSteps: Int = 40,
+    /** Legacy step budget; `0` (and any value) is ignored — the loop is unlimited. */
+    val maxSteps: Int = 0,
     val steps: Int = 0,
     val events: List<LocalEvent> = emptyList(),
     val messages: List<LocalMessage> = emptyList(),
@@ -116,7 +117,7 @@ data class LocalTask(
     val progressLabel: String
         get() = when (status) {
             LocalTaskStatus.QUEUED -> "Queued"
-            LocalTaskStatus.RUNNING -> if (steps > 0) "Step $steps of $maxSteps" else "Starting"
+            LocalTaskStatus.RUNNING -> if (steps > 0) "Step $steps" else "Starting"
             LocalTaskStatus.COMPLETED -> "Completed"
             LocalTaskStatus.FAILED -> "Failed"
             else -> "Stopped"

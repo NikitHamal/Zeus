@@ -137,6 +137,7 @@ internal fun AgentSessionScreen(
     var tab by remember(session.id) { mutableIntStateOf(0) }
     var menu by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
+    val isLocal = isLocalSessionId(session.id)
     val active = session.status in listOf("queued", "preparing", "running")
 
     Column(Modifier.fillMaxSize().imePadding()) {
@@ -173,17 +174,28 @@ internal fun AgentSessionScreen(
                     Icon(Icons.Rounded.MoreVert, "Task options")
                 }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                    DropdownMenuItem(
-                        text = { Text("Compact context") },
-                        onClick = { menu = false; viewModel.sendMessage("/compact", emptyList()) {} },
-                        leadingIcon = { Icon(Icons.Rounded.Compress, null) }
-                    )
-                    DropdownMenuItem(
-                        text = { Text(if (session.archived) "Restore" else "Archive") },
-                        enabled = !active,
-                        onClick = { menu = false; if (session.archived) viewModel.restore(session) else viewModel.archive(session) },
-                        leadingIcon = { Icon(if (session.archived) Icons.Rounded.Restore else Icons.Rounded.Archive, null) }
-                    )
+                    if (!isLocal) {
+                        DropdownMenuItem(
+                            text = { Text("Compact context") },
+                            onClick = { menu = false; viewModel.sendMessage("/compact", emptyList()) {} },
+                            leadingIcon = { Icon(Icons.Rounded.Compress, null) }
+                        )
+                    }
+                    if (isLocal && !active) {
+                        DropdownMenuItem(
+                            text = { Text("Run again") },
+                            onClick = { menu = false; viewModel.retryLocalTask(session) },
+                            leadingIcon = { Icon(Icons.Rounded.RestartAlt, null) }
+                        )
+                    }
+                    if (!isLocal) {
+                        DropdownMenuItem(
+                            text = { Text(if (session.archived) "Restore" else "Archive") },
+                            enabled = !active,
+                            onClick = { menu = false; if (session.archived) viewModel.restore(session) else viewModel.archive(session) },
+                            leadingIcon = { Icon(if (session.archived) Icons.Rounded.Restore else Icons.Rounded.Archive, null) }
+                        )
+                    }
                     DropdownMenuItem(
                         text = { Text("Delete permanently") },
                         enabled = !active,
@@ -210,10 +222,10 @@ internal fun AgentSessionScreen(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
                 )
-                CompactAction(Icons.Rounded.Pause, "Pause", visible = active) { viewModel.control("pause") }
+                CompactAction(Icons.Rounded.Pause, "Pause", visible = active && !isLocal) { viewModel.control("pause") }
                 CompactAction(
                     Icons.Rounded.PlayArrow, "Resume",
-                    visible = session.status in listOf("paused", "waiting", "failed", "completed")
+                    visible = !isLocal && session.status in listOf("paused", "waiting", "failed", "completed")
                 ) { viewModel.control("resume") }
                 CompactAction(
                     Icons.Rounded.Stop, "Stop",
@@ -558,7 +570,9 @@ private fun workspaceMatchesSession(session: AgentSession, workspaces: List<Work
     workspaces.firstOrNull { urlOf(it).contains(repo + ".git") && (branch.isBlank() || branchOf(it) == branch) }
         ?.let { return it }
     // Fallback: URL contains owner/repo regardless of branch.
-    return workspaces.firstOrNull { urlOf(it).contains(repo) }
+    workspaces.firstOrNull { urlOf(it).contains(repo) }?.let { return it }
+    // Local tasks carry the workspace name instead of a repo slug.
+    return workspaces.firstOrNull { it.name.lowercase() == repo && (branch.isBlank() || branchOf(it) == branch) }
 }
 
 @Composable
@@ -655,14 +669,16 @@ private fun DeliverTab(
             }
         }
         item {
-            OutlinedButton(
-                onClick = { if (session.repoHtmlUrl.isNotBlank()) uriHandler.openUri(session.repoHtmlUrl) },
-                enabled = session.repoHtmlUrl.isNotBlank(),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(Icons.Rounded.OpenInBrowser, null, Modifier.size(17.dp))
-                Spacer(Modifier.width(7.dp))
-                Text("Open repository on GitHub")
+            if (!isLocalSessionId(session.id)) {
+                OutlinedButton(
+                    onClick = { if (session.repoHtmlUrl.isNotBlank()) uriHandler.openUri(session.repoHtmlUrl) },
+                    enabled = session.repoHtmlUrl.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Rounded.OpenInBrowser, null, Modifier.size(17.dp))
+                    Spacer(Modifier.width(7.dp))
+                    Text("Open repository on GitHub")
+                }
             }
         }
 
@@ -685,21 +701,31 @@ private fun DeliverTab(
         }
 
         item { SectionLabel("Delivery") }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilledTonalButton(
-                    onClick = { viewModel.runAction("push") },
-                    enabled = !active && session.workBranch.isNotBlank(),
-                    modifier = Modifier.weight(1f)
-                ) { Text("Push branch", maxLines = 1) }
-                FilledTonalButton(
-                    onClick = { viewModel.runAction("open_pr") },
-                    enabled = !active && session.workBranch.isNotBlank(),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Icon(Icons.Rounded.CallMerge, null, Modifier.size(15.dp))
-                    Spacer(Modifier.width(5.dp))
-                    Text("Open PR", maxLines = 1)
+        if (isLocalSessionId(session.id)) {
+            item {
+                Text(
+                    "This task ran on-device. Commit and push the workspace branch from Workspaces, or run a cloud task to deliver with a pull request.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        } else {
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilledTonalButton(
+                        onClick = { viewModel.runAction("push") },
+                        enabled = !active && session.workBranch.isNotBlank(),
+                        modifier = Modifier.weight(1f)
+                    ) { Text("Push branch", maxLines = 1) }
+                    FilledTonalButton(
+                        onClick = { viewModel.runAction("open_pr") },
+                        enabled = !active && session.workBranch.isNotBlank(),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Rounded.CallMerge, null, Modifier.size(15.dp))
+                        Spacer(Modifier.width(5.dp))
+                        Text("Open PR", maxLines = 1)
+                    }
                 }
             }
         }

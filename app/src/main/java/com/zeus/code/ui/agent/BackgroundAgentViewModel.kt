@@ -8,6 +8,13 @@ import androidx.lifecycle.viewModelScope
 import com.zeus.code.data.BackgroundAgentApi
 import com.zeus.code.data.BackgroundAgentApiException
 import com.zeus.code.data.SecureTokenStore
+import com.zeus.code.local.LocalAgentService
+import com.zeus.code.local.LocalEvent
+import com.zeus.code.local.LocalEventKind
+import com.zeus.code.local.LocalMessage
+import com.zeus.code.local.LocalRole
+import com.zeus.code.local.LocalTaskStore
+import com.zeus.code.local.LocalTaskStatus
 import com.zeus.code.model.AgentBranch
 import com.zeus.code.model.AgentLlmCatalog
 import com.zeus.code.model.AgentLlmProviderEntry
@@ -45,6 +52,10 @@ data class AgentUiState(
     val me: AgentMeResponse? = null,
     val projects: List<AgentProject> = emptyList(),
     val sessions: List<AgentSession> = emptyList(),
+    /** On-device tasks projected onto [AgentSession] (see LocalSessionBridge). */
+    val localSessions: List<AgentSession> = emptyList(),
+    /** True when new tasks run on-device instead of NEBians workers. */
+    val localMode: Boolean = false,
     val repositories: List<AgentRepository> = emptyList(),
     val repositoryQuery: String = "",
     val branches: List<AgentBranch> = emptyList(),
@@ -92,20 +103,62 @@ class BackgroundAgentViewModel(application: Application) : AndroidViewModel(appl
     private val api = BackgroundAgentApi(application)
     private val store = SecureTokenStore(application, "background_agent")
     private val seenPrefs = application.getSharedPreferences("zeus_agent_seen", android.content.Context.MODE_PRIVATE)
+    private val uiPrefs = application.getSharedPreferences("zeus_agent_ui", android.content.Context.MODE_PRIVATE)
     private val _state = MutableStateFlow(AgentUiState())
     val state: StateFlow<AgentUiState> = _state.asStateFlow()
     private var token: String? = null
     private var pairingJob: Job? = null
     private var refreshJob: Job? = null
+    /** Cloud sessions as last reported by NEBians; [AgentUiState.sessions] is the merged view. */
+    private var cloudSessions: List<AgentSession> = emptyList()
 
     init {
         viewModelScope.launch {
             token = store.read()
             if (token != null) validateAndLoad()
-            _state.update { it.copy(booting = false, authorized = token != null) }
+            _state.update {
+                it.copy(
+                    booting = false,
+                    authorized = token != null,
+                    localMode = storedLocalMode(default = token == null)
+                )
+            }
             if (token != null) startRefreshLoop()
         }
+        // Local Mode storage is independent of NEBians authorization.
+        viewModelScope.launch {
+            LocalTaskStore.init(application)
+            LocalTaskStore.recoverOrphans()
+            LocalTaskStore.tasks.collect { tasks ->
+                val mapped = tasks.map { it.toAgentSession() }
+                _state.update { st ->
+                    val selected = st.selectedSession
+                    st.copy(
+                        localSessions = mapped,
+                        sessions = if (st.archivedMode) st.sessions else mergedSessions(mapped),
+                        selectedSession = if (selected != null && isLocalSessionId(selected.id)) {
+                            mapped.firstOrNull { it.id == selected.id } ?: selected
+                        } else selected
+                    )
+                }
+                recomputeUnread()
+            }
+        }
     }
+
+    private fun storedLocalMode(default: Boolean): Boolean = uiPrefs.getBoolean("local_mode", default)
+
+    /** Switch where new tasks run — NEBians workers or this device. */
+    fun setAgentMode(local: Boolean) {
+        uiPrefs.edit().putBoolean("local_mode", local).apply()
+        _state.update { it.copy(localMode = local, message = if (local) "New tasks will run on-device." else "New tasks will run on NEBians.") }
+    }
+
+    private fun mergedSessions(local: List<AgentSession>): List<AgentSession> =
+        (cloudSessions + local).sortedWith(
+            compareByDescending<AgentSession> { it.status in listOf("queued", "preparing", "running") }
+                .thenByDescending { it.updatedAt }
+        )
 
     fun startPairing() = task("Creating secure device authorization...") {
         pairingJob?.cancel()
@@ -133,7 +186,29 @@ class BackgroundAgentViewModel(application: Application) : AndroidViewModel(appl
         refreshJob?.cancel()
         pairingJob?.cancel()
         store.clear()
-        _state.value = AgentUiState(booting = false, message = "Background Agent disconnected from Zeus.")
+        cloudSessions = emptyList()
+        _state.update {
+            it.copy(
+                booting = false,
+                authorized = false,
+                offline = false,
+                me = null,
+                projects = emptyList(),
+                repositories = emptyList(),
+                branches = emptyList(),
+                selectedRepository = null,
+                selectedProject = null,
+                selectedSession = null,
+                worker = AgentWorker(),
+                llmCatalog = null,
+                llmSavedProviders = emptyList(),
+                llmSelection = AgentLlmSelection(),
+                localMode = true,
+                sessions = mergedSessions(it.localSessions),
+                message = "Background Agent disconnected from Zeus."
+            )
+        }
+        uiPrefs.edit().putBoolean("local_mode", true).apply()
         if (current != null) viewModelScope.launch { runCatching { api.revoke(current) } }
     }
 
@@ -297,6 +372,12 @@ class BackgroundAgentViewModel(application: Application) : AndroidViewModel(appl
     }
 
     fun openSession(session: AgentSession) = task(null) {
+        if (isLocalSessionId(session.id)) {
+            val fresh = LocalTaskStore.get(session.id)?.toAgentSession() ?: session
+            _state.update { it.copy(selectedSession = fresh) }
+            markSeen(fresh)
+            return@task
+        }
         val fresh = api.session(requireToken(), session.id).session
         _state.update { it.copy(selectedSession = fresh) }
         markSeen(fresh)
@@ -321,6 +402,25 @@ class BackgroundAgentViewModel(application: Application) : AndroidViewModel(appl
 
     fun sendMessage(content: String, uploads: List<AgentUpload>, onSent: (() -> Unit)? = null) = task("Sending guidance...") {
         val session = requireSession()
+        if (isLocalSessionId(session.id)) {
+            // Guidance is folded into the on-device transcript; the running
+            // engine absorbs it before its next model call.
+            val current = LocalTaskStore.get(session.id) ?: error("Task not found.")
+            LocalTaskStore.save(
+                current.copy(
+                    messages = current.messages + LocalMessage(role = LocalRole.USER, content = content.trim()),
+                    events = current.events + LocalEvent(
+                        id = LocalTaskStore.nextEventId(current),
+                        at = System.currentTimeMillis(),
+                        kind = LocalEventKind.INFO,
+                        text = "Guidance received: ${content.trim().take(300)}"
+                    )
+                )
+            )
+            onSent?.invoke()
+            toast("Guidance added to the task.")
+            return@task
+        }
         api.sendMessage(requireToken(), session.id, content.trim(), uploads)
         reloadSelected()
         onSent?.invoke()
@@ -329,31 +429,68 @@ class BackgroundAgentViewModel(application: Application) : AndroidViewModel(appl
 
     fun control(command: String) = task("Sending ${command.lowercase()} request...") {
         val session = requireSession()
+        if (isLocalSessionId(session.id)) {
+            check(command == "stop") { "Not supported for on-device tasks." }
+            LocalAgentService.stopCurrent(getApplication())
+            LocalTaskStore.get(session.id)?.let { current ->
+                if (current.status == LocalTaskStatus.QUEUED) {
+                    LocalTaskStore.save(current.copy(status = LocalTaskStatus.STOPPED))
+                }
+            }
+            toast("Stop requested.")
+            return@task
+        }
         _state.update { it.copy(selectedSession = api.control(requireToken(), session.id, command).session) }
         reloadSelected()
     }
 
+    /** Re-queues a finished on-device task with the same goal and model. */
+    fun retryLocalTask(session: AgentSession) = task("Re-queueing task...") {
+        require(isLocalSessionId(session.id)) { "Not an on-device task." }
+        val current = LocalTaskStore.get(session.id) ?: error("Task not found.")
+        require(!LocalTaskStatus.isActive(current.status)) { "Task is already active." }
+        LocalTaskStore.save(
+            current.copy(
+                status = LocalTaskStatus.QUEUED,
+                error = "",
+                summary = "",
+                steps = 0,
+                completedAt = 0L
+            )
+        )
+        LocalAgentService.enqueue(getApplication(), current.id)
+        toast("Task re-queued.")
+    }
+
     fun runAction(name: String) = task("Queueing action...") {
-        api.action(requireToken(), requireSession().id, name)
+        val session = requireSession()
+        check(!isLocalSessionId(session.id)) { "Delivery actions need a NEBians (cloud) task." }
+        api.action(requireToken(), session.id, name)
         reloadSelected()
         toast("Action queued.")
     }
 
     fun archive(session: AgentSession = requireSession()) = task("Archiving task...") {
+        check(!isLocalSessionId(session.id)) { "On-device tasks cannot be archived." }
         api.lifecycle(requireToken(), session.id, "archive")
         if (_state.value.selectedSession?.id == session.id) _state.update { it.copy(selectedSession = null) }
         refreshState()
     }
 
     fun restore(session: AgentSession = requireSession()) = task("Restoring task...") {
+        check(!isLocalSessionId(session.id)) { "On-device tasks cannot be archived." }
         api.lifecycle(requireToken(), session.id, "restore")
         refreshState()
     }
 
     fun delete(session: AgentSession = requireSession()) = task("Deleting task...") {
-        api.deleteSession(requireToken(), session.id)
-        if (_state.value.selectedSession?.id == session.id) _state.update { it.copy(selectedSession = null) }
-        refreshState()
+        if (isLocalSessionId(session.id)) {
+            LocalTaskStore.delete(session.id)
+        } else {
+            api.deleteSession(requireToken(), session.id)
+            if (_state.value.selectedSession?.id == session.id) _state.update { it.copy(selectedSession = null) }
+            refreshState()
+        }
     }
 
     fun prepareUploads(uris: List<Uri>, onReady: (List<AgentUpload>) -> Unit) = task("Reading attachments...") {
@@ -401,7 +538,8 @@ class BackgroundAgentViewModel(application: Application) : AndroidViewModel(appl
             if (error.statusCode == 401) {
                 store.clear()
                 token = null
-                _state.update { it.copy(authorized = false, message = "Zeus authorization expired. Connect once to continue.") }
+                uiPrefs.edit().putBoolean("local_mode", true).apply()
+                _state.update { it.copy(authorized = false, localMode = true, message = "Zeus authorization expired. Connect once to continue.") }
             } else {
                 _state.update { it.copy(authorized = true, offline = true, message = "NEBians is temporarily unavailable. Authorization is still saved.") }
             }
@@ -450,18 +588,20 @@ class BackgroundAgentViewModel(application: Application) : AndroidViewModel(appl
         val selectedId = _state.value.selectedSession?.id
         _state.update { state ->
             val catalog = response.llm ?: state.llmCatalog
+            cloudSessions = response.sessions
+            val merged = if (state.archivedMode) response.sessions else mergedSessions(state.localSessions)
             state.copy(
                 authorized = true,
                 offline = false,
                 projects = response.projects,
-                sessions = response.sessions,
+                sessions = merged,
                 worker = response.worker,
                 modelReady = response.model.configured,
                 llmCatalog = catalog,
                 llmSelection = sanitizeLlmSelection(catalog, state.llmSelection),
                 selectedProject = state.selectedProject?.let { selected -> response.projects.firstOrNull { it.id == selected.id } ?: selected },
                 selectedSession = if (keepSelected) state.selectedSession else null,
-                unreadIds = computeUnread(response.sessions)
+                unreadIds = computeUnread(merged)
             )
         }
         if (keepSelected && selectedId != null) reloadSelected()
@@ -484,6 +624,12 @@ class BackgroundAgentViewModel(application: Application) : AndroidViewModel(appl
 
     private suspend fun reloadSelected() {
         val selected = _state.value.selectedSession ?: return
+        if (isLocalSessionId(selected.id)) {
+            // On-device tasks stream updates through the LocalTaskStore collector.
+            seenPrefs.edit().putLong(selected.id, selected.updatedAt).apply()
+            _state.update { it.copy(unreadIds = it.unreadIds - selected.id) }
+            return
+        }
         val updated = api.session(requireToken(), selected.id).session
         _state.update { st -> st.copy(selectedSession = updated, unreadIds = st.unreadIds - updated.id) }
         // A session the user is looking at is always considered read.
@@ -506,7 +652,8 @@ class BackgroundAgentViewModel(application: Application) : AndroidViewModel(appl
                     store.clear()
                     token = null
                     refreshJob?.cancel()
-                    _state.update { it.copy(authorized = false, pairing = null, message = error.message) }
+                    uiPrefs.edit().putBoolean("local_mode", true).apply()
+                    _state.update { it.copy(authorized = false, pairing = null, localMode = true, message = error.message) }
                 } else {
                     _state.update { it.copy(message = error.message) }
                 }

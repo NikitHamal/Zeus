@@ -21,16 +21,21 @@ OAuth callback registered in Android: `zeus://oauth`
 
 ### Local Mode — on-device coding agent
 
-The **Local** tab runs the coding agent entirely on the phone. Tasks execute in a
-foreground service with a wake lock, so they keep running while Zeus is in the
-background or the screen is off — no cloud worker required.
+Local Mode runs the coding agent entirely on the phone. Flip the cloud icon on
+the Agent prompt bar between **NEBians cloud** and **This device (local)** —
+the same task list, chat screen, changes view and delivery flow serve both
+modes. Tasks execute in a foreground service with a wake lock, so they keep
+running while Zeus is in the background or the screen is off — no cloud worker
+required.
 
 - Works on any Zeus workspace (cloned repo, imported folder or local project)
 - Agentic tool loop: `list_files`, `read_file`, `write_file`, `edit_file`,
   `delete_path`, `search_files`, `run_command`, `git_status`, `git_diff`,
   `git_commit` and `finish`
+- No step limit — tasks run until the model finishes or you stop them
 - Strict workspace sandbox (canonical-path checks, bounded outputs, command timeout)
-- Live activity timeline, step progress, changed-file tracking and final summary
+- Live activity timeline, changed-file tracking and final summary; mid-task
+  guidance reaches the model before its next step
 - Stop and re-run tasks; history survives process death (JSON task store)
 - Model sources, selected per task:
   - **NEBians providers** — the same community/official/BYOK catalog as the cloud

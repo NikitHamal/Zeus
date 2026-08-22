@@ -8,7 +8,8 @@ import java.io.File
  * For every step it asks the chosen model for the next move, executes the
  * requested tools inside the workspace sandbox, feeds results back and keeps
  * going until the model calls [LocalAgentTools.FINISH], stops requesting
- * tools, hits the step budget or the task is cancelled/stopped externally.
+ * tools or the task is cancelled/stopped externally. There is no step cap —
+ * long tasks are bounded only by context compaction and the user's stop.
  */
 class LocalAgentEngine(
     private val llm: LocalLlmClient,
@@ -24,7 +25,9 @@ class LocalAgentEngine(
     suspend fun run(
         task: LocalTask,
         workspace: File,
-        onStep: suspend (step: Int, changedFiles: Set<String>) -> Unit
+        onStep: suspend (step: Int, changedFiles: Set<String>) -> Unit,
+        /** Live view of the stored task so mid-run guidance is picked up. */
+        latest: () -> LocalTask? = { null }
     ): EngineOutcome {
         val tools = LocalAgentTools(workspace)
         val definitions = tools.definitions()
@@ -38,10 +41,15 @@ class LocalAgentEngine(
 
         appendEvent(LocalEventKind.INFO, "Task started with ${task.choice.label.ifBlank { task.choice.model }}.")
 
-        for (step in 1..task.maxSteps) {
+        var step = 0
+        while (true) {
+            step += 1
             if (shouldStop()) return stopped(changedFiles)
             compactHistory(history)
             onStep(step - 1, changedFiles)
+
+            // Guidance sent while running reaches the model before the next move.
+            absorbLateGuidance(latest() ?: task, history)
 
             val reply = try {
                 llm.complete(task.choice, system, history.toList(), definitions)
@@ -109,15 +117,28 @@ class LocalAgentEngine(
 
             onStep(step, changedFiles)
         }
-
-        lastError = "Reached the ${task.maxSteps}-step limit."
-        appendEvent(LocalEventKind.ERROR, lastError)
-        return EngineOutcome(successful = false, summary = summary, changedFiles = changedFiles, error = lastError)
     }
 
     private suspend fun stopped(changedFiles: Set<String>): EngineOutcome {
         appendEvent(LocalEventKind.INFO, "Task stopped by user.")
         return EngineOutcome(successful = false, summary = "", changedFiles = changedFiles, error = "stopped")
+    }
+
+    /**
+     * User guidance appended to the task while it runs (from the session
+     * composer) is folded into the conversation before the next model call.
+     */
+    private var deliveredGuidance = 0
+
+    private suspend fun absorbLateGuidance(task: LocalTask, history: MutableList<LocalMessage>) {
+        val brief = buildUserBrief(task)
+        val pending = task.messages.filter { it.role == LocalRole.USER && it.content != brief }
+        while (deliveredGuidance < pending.size) {
+            val message = pending[deliveredGuidance]
+            deliveredGuidance += 1
+            history += LocalMessage(LocalRole.USER, message.content)
+            appendEvent(LocalEventKind.INFO, "Guidance received: ${message.content.take(300)}")
+        }
     }
 
     /**

@@ -2,6 +2,9 @@
 
 package com.zeus.code.ui.agent
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -16,6 +19,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -30,6 +34,7 @@ import androidx.compose.material.icons.rounded.Archive
 import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.AttachFile
 import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
@@ -37,7 +42,8 @@ import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.LinkOff
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.OpenInBrowser
-import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.PhoneAndroid
+import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material.icons.rounded.Restore
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.AssistChip
@@ -52,12 +58,15 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedCard
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -67,6 +76,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -77,18 +87,24 @@ import com.zeus.code.model.AgentLlmProviderEntry
 import com.zeus.code.model.AgentSession
 import com.zeus.code.model.AgentUpload
 import com.zeus.code.model.Workspace
+import com.zeus.code.ui.local.LocalAgentUiState
+import com.zeus.code.ui.local.LocalAgentViewModel
+import com.zeus.code.ui.local.LocalModelPickerDialog
+import com.zeus.code.ui.local.LocalProvidersDialog
 
 @Composable
 fun BackgroundAgentScreen(
     viewModel: BackgroundAgentViewModel,
+    localViewModel: LocalAgentViewModel,
     workspaces: List<Workspace>,
     onOpenWorkspace: (Workspace) -> Unit,
-    onCloneBranch: (String, String, String?) -> Unit
+    onCloneBranch: (String, String, String?) -> Unit,
+    onOpenWorkspacesTab: () -> Unit
 ) {
     val state by viewModel.state.collectAsState()
+    val localState by localViewModel.state.collectAsState()
     when {
         state.booting -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-        !state.authorized -> AgentConnectScreen(state, viewModel)
         state.selectedSession != null -> AgentSessionScreen(
             state = state,
             viewModel = viewModel,
@@ -96,7 +112,10 @@ fun BackgroundAgentScreen(
             onOpenWorkspace = onOpenWorkspace,
             onCloneBranch = onCloneBranch
         )
-        else -> AgentDashboard(state, viewModel)
+        // Local Mode works without a NEBians connection — only the cloud
+        // composer is gated behind authorization.
+        !state.authorized && !state.localMode -> AgentConnectScreen(state, viewModel)
+        else -> AgentDashboard(state, localState, viewModel, localViewModel, workspaces, onOpenWorkspace, onCloneBranch, onOpenWorkspacesTab)
     }
 }
 
@@ -183,7 +202,17 @@ private fun defaultLlmLabel(catalog: AgentLlmCatalog?): String {
 }
 
 @Composable
-private fun AgentDashboard(state: AgentUiState, viewModel: BackgroundAgentViewModel) {
+private fun AgentDashboard(
+    state: AgentUiState,
+    localState: LocalAgentUiState,
+    viewModel: BackgroundAgentViewModel,
+    localViewModel: LocalAgentViewModel,
+    workspaces: List<Workspace>,
+    onOpenWorkspace: (Workspace) -> Unit,
+    onCloneBranch: (String, String, String?) -> Unit,
+    onOpenWorkspacesTab: () -> Unit
+) {
+    val context = LocalContext.current
     var projectPicker by remember { mutableStateOf(false) }
     var addProject by remember { mutableStateOf(false) }
     var accountMenu by remember { mutableStateOf(false) }
@@ -191,15 +220,33 @@ private fun AgentDashboard(state: AgentUiState, viewModel: BackgroundAgentViewMo
     var modelPicker by remember { mutableStateOf(false) }
     var providersDialog by remember { mutableStateOf(false) }
     var focusedPreset by remember { mutableStateOf<AgentLlmProviderEntry?>(null) }
+    var workspacePicker by remember { mutableStateOf(false) }
+    var localModelPicker by remember { mutableStateOf(false) }
+    var localProvidersDialog by remember { mutableStateOf(false) }
+    var modeMenu by remember { mutableStateOf(false) }
     var goal by remember { mutableStateOf("") }
     var uploads by remember { mutableStateOf<List<AgentUpload>>(emptyList()) }
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) viewModel.prepareUploads(uris) { uploads = it }
     }
 
+    // Completion notifications for on-device tasks need the permission on 33+.
+    val notifPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
+    LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    val selectedLocalWorkspace = workspaces.firstOrNull { it.path == localState.selectedWorkspacePath }
     androidx.compose.material3.pulltorefresh.PullToRefreshBox(
-        isRefreshing = state.busy,
-        onRefresh = { viewModel.refresh() },
+        isRefreshing = state.busy || localState.busy,
+        onRefresh = {
+            viewModel.refresh()
+            localViewModel.refresh()
+        },
         modifier = Modifier.fillMaxSize()
     ) {
         LazyColumn(
@@ -212,7 +259,12 @@ private fun AgentDashboard(state: AgentUiState, viewModel: BackgroundAgentViewMo
                     Column(Modifier.weight(1f)) {
                         Text("Background Agent", style = MaterialTheme.typography.headlineSmall)
                         Text(
-                            if (state.worker.healthy) "Worker online" else "Worker unavailable",
+                            when {
+                                state.localMode -> "On-device" + (selectedLocalWorkspace?.let { " · ${it.name}" } ?: "")
+                                !state.authorized -> "Not connected"
+                                state.worker.healthy -> "Worker online"
+                                else -> "Worker unavailable"
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
@@ -228,6 +280,11 @@ private fun AgentDashboard(state: AgentUiState, viewModel: BackgroundAgentViewMo
                             leadingIcon = { Icon(Icons.Rounded.Tune, null) }
                         )
                         DropdownMenuItem(
+                            text = { Text("On-device AI providers") },
+                            onClick = { accountMenu = false; localProvidersDialog = true },
+                            leadingIcon = { Icon(Icons.Rounded.PhoneAndroid, null) }
+                        )
+                        DropdownMenuItem(
                             text = { Text("Disconnect NEBians") },
                             onClick = { accountMenu = false; confirmDisconnect = true },
                             leadingIcon = { Icon(Icons.Rounded.LinkOff, null) }
@@ -240,51 +297,110 @@ private fun AgentDashboard(state: AgentUiState, viewModel: BackgroundAgentViewMo
             ElevatedCard(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Row(
-                            Modifier.clickable(enabled = !state.busy) { projectPicker = true },
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            val project = state.selectedProject
-                            val repoShort = project?.repoFullName
-                                ?.substringAfterLast('/', project.repoFullName)
-                                .orEmpty()
-                            Text(
-                                text = repoShort.ifBlank { "Choose project" },
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                color = if (project == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface
-                            )
-                            val branch = state.selectedBranch.ifBlank {
-                                project?.preferredBaseBranch ?: project?.defaultBranch ?: ""
-                            }
-                            if (branch.isNotBlank()) {
-                                Spacer(Modifier.width(6.dp))
+                        if (state.localMode) {
+                            // Local tasks run against an on-device workspace.
+                            Row(
+                                Modifier.weight(1f).clickable { workspacePicker = true },
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
                                 Text(
-                                    branch,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    text = selectedLocalWorkspace?.name ?: "Choose workspace",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold,
                                     maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
+                                    overflow = TextOverflow.Ellipsis,
+                                    color = if (selectedLocalWorkspace == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface
+                                )
+                                selectedLocalWorkspace?.currentBranch?.takeIf { it.isNotBlank() }?.let { branch ->
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        branch,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                Spacer(Modifier.width(2.dp))
+                                Icon(
+                                    Icons.Rounded.KeyboardArrowDown,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                            Spacer(Modifier.width(2.dp))
-                            Icon(
-                                Icons.Rounded.KeyboardArrowDown,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                        } else {
+                            Row(
+                                Modifier.weight(1f).clickable(enabled = !state.busy) { projectPicker = true },
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                val project = state.selectedProject
+                                val repoShort = project?.repoFullName
+                                    ?.substringAfterLast('/', project.repoFullName)
+                                    .orEmpty()
+                                Text(
+                                    text = repoShort.ifBlank { "Choose project" },
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    color = if (project == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface
+                                )
+                                val branch = state.selectedBranch.ifBlank {
+                                    project?.preferredBaseBranch ?: project?.defaultBranch ?: ""
+                                }
+                                if (branch.isNotBlank()) {
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        branch,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                Spacer(Modifier.width(2.dp))
+                                Icon(
+                                    Icons.Rounded.KeyboardArrowDown,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                         Spacer(Modifier.weight(1f))
-                        IconButton(onClick = viewModel::refresh, modifier = Modifier.size(32.dp)) {
-                            Icon(
-                                Icons.Rounded.Cloud,
-                                contentDescription = if (state.worker.healthy) "Worker online" else "Worker unavailable",
-                                modifier = Modifier.size(20.dp),
-                                tint = if (state.worker.healthy) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error
-                            )
+                        // Cloud / on-device runner selector.
+                        Box {
+                            IconButton(onClick = { modeMenu = true }, modifier = Modifier.size(32.dp)) {
+                                Icon(
+                                    if (state.localMode) Icons.Rounded.PhoneAndroid else Icons.Rounded.Cloud,
+                                    contentDescription = if (state.localMode) "Runner: this device" else "Runner: NEBians cloud",
+                                    modifier = Modifier.size(20.dp),
+                                    tint = when {
+                                        state.localMode -> MaterialTheme.colorScheme.primary
+                                        state.authorized && !state.worker.healthy -> MaterialTheme.colorScheme.error
+                                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                    }
+                                )
+                            }
+                            DropdownMenu(expanded = modeMenu, onDismissRequest = { modeMenu = false }) {
+                                DropdownMenuItem(
+                                    text = { Text("NEBians cloud") },
+                                    onClick = { modeMenu = false; viewModel.setAgentMode(false) },
+                                    leadingIcon = { Icon(Icons.Rounded.Cloud, null) },
+                                    trailingIcon = {
+                                        if (!state.localMode) Icon(Icons.Rounded.Check, null, Modifier.size(16.dp))
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("This device (local)") },
+                                    onClick = { modeMenu = false; viewModel.setAgentMode(true) },
+                                    leadingIcon = { Icon(Icons.Rounded.PhoneAndroid, null) },
+                                    trailingIcon = {
+                                        if (state.localMode) Icon(Icons.Rounded.Check, null, Modifier.size(16.dp))
+                                    }
+                                )
+                            }
                         }
                     }
                     Spacer(Modifier.height(4.dp))
@@ -343,11 +459,15 @@ private fun AgentDashboard(state: AgentUiState, viewModel: BackgroundAgentViewMo
                         }
                         Spacer(Modifier.width(8.dp))
                         Row(
-                            Modifier.weight(1f).clickable { modelPicker = true }.padding(vertical = 6.dp),
+                            Modifier.weight(1f).clickable { if (state.localMode) localModelPicker = true else modelPicker = true }.padding(vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                state.llmSelection.label.ifBlank { defaultLlmLabel(state.llmCatalog) },
+                                if (state.localMode) {
+                                    localState.selection.label.ifBlank { "Choose model" }
+                                } else {
+                                    state.llmSelection.label.ifBlank { defaultLlmLabel(state.llmCatalog) }
+                                },
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
@@ -363,12 +483,24 @@ private fun AgentDashboard(state: AgentUiState, viewModel: BackgroundAgentViewMo
                             )
                         }
                         Spacer(Modifier.width(8.dp))
-                        val canSend = state.selectedProject != null && goal.trim().length >= 10 && !state.busy
+                        val canSend = if (state.localMode) {
+                            selectedLocalWorkspace != null && localState.selection.isValid &&
+                                goal.trim().length >= 10 && !localState.busy && !state.busy
+                        } else {
+                            state.selectedProject != null && goal.trim().length >= 10 && !state.busy
+                        }
                         Surface(
                             onClick = {
-                                viewModel.createSession(goal, uploads) {
-                                    goal = ""
-                                    uploads = emptyList<AgentUpload>()
+                                if (state.localMode) {
+                                    localViewModel.startTask(goal, workspaces) {
+                                        goal = ""
+                                        uploads = emptyList<AgentUpload>()
+                                    }
+                                } else {
+                                    viewModel.createSession(goal, uploads) {
+                                        goal = ""
+                                        uploads = emptyList<AgentUpload>()
+                                    }
                                 }
                             },
                             enabled = canSend,
@@ -412,6 +544,7 @@ private fun AgentDashboard(state: AgentUiState, viewModel: BackgroundAgentViewMo
                 AgentSessionCard(
                     session = session,
                     unread = session.id in state.unreadIds,
+                    isLocal = isLocalSessionId(session.id),
                     viewModel = viewModel
                 )
             }
@@ -443,6 +576,33 @@ private fun AgentDashboard(state: AgentUiState, viewModel: BackgroundAgentViewMo
         focusPreset = focusedPreset,
         onDismiss = { providersDialog = false; focusedPreset = null }
     )
+    if (workspacePicker) LocalWorkspacePickerDialog(
+        localState = localState,
+        workspaces = workspaces,
+        onDismiss = { workspacePicker = false },
+        onSelect = {
+            localViewModel.selectWorkspace(it)
+            workspacePicker = false
+        },
+        onManage = {
+            workspacePicker = false
+            onOpenWorkspacesTab()
+        }
+    )
+    if (localModelPicker) LocalModelPickerDialog(
+        state = localState,
+        onDismiss = { localModelPicker = false },
+        onSelect = { localViewModel.select(it); localModelPicker = false },
+        onManageProviders = {
+            localModelPicker = false
+            localProvidersDialog = true
+        }
+    )
+    if (localProvidersDialog) LocalProvidersDialog(
+        state = localState,
+        viewModel = localViewModel,
+        onDismiss = { localProvidersDialog = false }
+    )
     if (confirmDisconnect) AgentConfirmDialog(
         title = "Disconnect NEBians?",
         body = "This revokes the saved background-agent device token. Your tasks remain on NEBians.",
@@ -454,7 +614,12 @@ private fun AgentDashboard(state: AgentUiState, viewModel: BackgroundAgentViewMo
 }
 
 @Composable
-private fun AgentSessionCard(session: AgentSession, unread: Boolean, viewModel: BackgroundAgentViewModel) {
+private fun AgentSessionCard(
+    session: AgentSession,
+    unread: Boolean,
+    isLocal: Boolean,
+    viewModel: BackgroundAgentViewModel
+) {
     var menu by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     OutlinedCard(Modifier.fillMaxWidth().clickable { viewModel.openSession(session) }) {
@@ -481,12 +646,21 @@ private fun AgentSessionCard(session: AgentSession, unread: Boolean, viewModel: 
                     IconButton(onClick = { menu = true }, modifier = Modifier.size(36.dp)) { Icon(Icons.Rounded.MoreVert, "Task options") }
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                         val active = session.status in listOf("queued", "preparing", "running")
-                        DropdownMenuItem(
-                            text = { Text(if (session.archived) "Restore" else "Archive") },
-                            enabled = !active,
-                            onClick = { menu = false; if (session.archived) viewModel.restore(session) else viewModel.archive(session) },
-                            leadingIcon = { Icon(if (session.archived) Icons.Rounded.Restore else Icons.Rounded.Archive, null) }
-                        )
+                        if (isLocal) {
+                            DropdownMenuItem(
+                                text = { Text("Run again") },
+                                enabled = !active,
+                                onClick = { menu = false; viewModel.retryLocalTask(session) },
+                                leadingIcon = { Icon(Icons.Rounded.RestartAlt, null) }
+                            )
+                        } else {
+                            DropdownMenuItem(
+                                text = { Text(if (session.archived) "Restore" else "Archive") },
+                                enabled = !active,
+                                onClick = { menu = false; if (session.archived) viewModel.restore(session) else viewModel.archive(session) },
+                                leadingIcon = { Icon(if (session.archived) Icons.Rounded.Restore else Icons.Rounded.Archive, null) }
+                            )
+                        }
                         DropdownMenuItem(
                             text = { Text("Delete permanently") },
                             enabled = !active,
@@ -515,5 +689,56 @@ private fun AgentSessionCard(session: AgentSession, unread: Boolean, viewModel: 
         destructive = true,
         onDismiss = { confirmDelete = false },
         onConfirm = { confirmDelete = false; viewModel.delete(session) }
+    )
+}
+
+@Composable
+private fun LocalWorkspacePickerDialog(
+    localState: LocalAgentUiState,
+    workspaces: List<Workspace>,
+    onDismiss: () -> Unit,
+    onSelect: (Workspace) -> Unit,
+    onManage: () -> Unit
+) {
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Choose workspace") },
+        text = {
+            Column {
+                if (workspaces.isEmpty()) {
+                    Text(
+                        "No local workspaces yet. Create or clone one from the Workspaces tab.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    LazyColumn(Modifier.heightIn(max = 380.dp)) {
+                        items(workspaces, key = { it.path }) { workspace ->
+                            Row(
+                                Modifier.fillMaxWidth().clickable { onSelect(workspace) }.padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = workspace.path == localState.selectedWorkspacePath,
+                                    onClick = { onSelect(workspace) }
+                                )
+                                Column(Modifier.padding(start = 4.dp)) {
+                                    Text(workspace.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                                    Text(
+                                        workspace.currentBranch?.let { "$it · ${workspace.path}" } ?: workspace.path,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+        dismissButton = { TextButton(onClick = onManage) { Text("Manage workspaces") } }
     )
 }

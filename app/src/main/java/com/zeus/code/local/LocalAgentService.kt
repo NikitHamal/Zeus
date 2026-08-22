@@ -164,7 +164,8 @@ class LocalAgentService : Service() {
 
             val outcome = engine.run(
                 task = LocalTaskStore.get(task.id) ?: task,
-                workspace = workspaceDir
+                workspace = workspaceDir,
+                latest = { LocalTaskStore.get(task.id) }
             ) { step, changed ->
                 onStepProgress(task.id, step)
             }
