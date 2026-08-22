@@ -26,23 +26,17 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.ClearAll
 import androidx.compose.material.icons.rounded.Delete
-import androidx.compose.material.icons.rounded.Description
-import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.FolderOpen
-import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Replay
 import androidx.compose.material.icons.rounded.Smartphone
-import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
@@ -78,10 +72,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import com.zeus.code.local.LocalEventKind
 import com.zeus.code.local.LocalTask
 import com.zeus.code.local.LocalTaskStatus
 import com.zeus.code.model.Workspace
+import com.zeus.code.ui.agent.AgentStatusChip
 import java.text.DateFormat
 import java.util.Date
 
@@ -423,7 +417,7 @@ private fun LocalTaskCard(task: LocalTask, viewModel: LocalAgentViewModel) {
     OutlinedCard(Modifier.fillMaxWidth().clickable { viewModel.openTask(task.id) }) {
         Column(Modifier.padding(horizontal = 13.dp, vertical = 11.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
             Row(verticalAlignment = Alignment.Top) {
-                LocalStatusChip(task.status)
+                AgentStatusChip(task.status)
                 Spacer(Modifier.width(8.dp))
                 Text(
                     task.goal,
@@ -494,25 +488,6 @@ private fun LocalTaskCard(task: LocalTask, viewModel: LocalAgentViewModel) {
 }
 
 @Composable
-internal fun LocalStatusChip(status: String) {
-    val (container, content) = when (status) {
-        LocalTaskStatus.RUNNING -> MaterialTheme.colorScheme.primaryContainer to MaterialTheme.colorScheme.onPrimaryContainer
-        LocalTaskStatus.COMPLETED -> MaterialTheme.colorScheme.tertiaryContainer to MaterialTheme.colorScheme.onTertiaryContainer
-        LocalTaskStatus.FAILED -> MaterialTheme.colorScheme.errorContainer to MaterialTheme.colorScheme.onErrorContainer
-        LocalTaskStatus.STOPPED -> MaterialTheme.colorScheme.surfaceVariant to MaterialTheme.colorScheme.onSurfaceVariant
-        else -> MaterialTheme.colorScheme.secondaryContainer to MaterialTheme.colorScheme.onSecondaryContainer
-    }
-    Surface(shape = RoundedCornerShape(50), color = container) {
-        Text(
-            status.replaceFirstChar { it.uppercase() },
-            style = MaterialTheme.typography.labelSmall,
-            color = content,
-            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
-        )
-    }
-}
-
-@Composable
 private fun LocalWorkspacePickerDialog(
     state: LocalAgentUiState,
     onSelect: (Workspace) -> Unit,
@@ -562,13 +537,3 @@ private fun LocalWorkspacePickerDialog(
 
 internal fun formatLocalTime(timestamp: Long): String =
     if (timestamp <= 0L) "" else DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(timestamp))
-
-/** Re-export used by the detail screen for its event timeline icons. */
-internal fun eventIcon(kind: String) = when (kind) {
-    LocalEventKind.TOOL -> Icons.Rounded.Tune
-    LocalEventKind.FILE -> Icons.Rounded.Description
-    LocalEventKind.ERROR -> Icons.Rounded.ErrorOutline
-    LocalEventKind.DONE -> Icons.Rounded.CheckCircle
-    LocalEventKind.LLM -> Icons.Rounded.AutoAwesome
-    else -> Icons.Rounded.Info
-}
