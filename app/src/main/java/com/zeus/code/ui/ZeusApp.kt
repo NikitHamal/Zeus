@@ -161,6 +161,8 @@ import com.zeus.code.model.Workspace
 import com.zeus.code.ui.agent.AgentUiState
 import com.zeus.code.ui.agent.BackgroundAgentScreen
 import com.zeus.code.ui.agent.BackgroundAgentViewModel
+import com.zeus.code.ui.local.LocalAgentScreen
+import com.zeus.code.ui.local.LocalAgentViewModel
 import com.zeus.code.ui.theme.ZeusGold
 import com.zeus.code.ui.theme.ZeusTheme
 import com.zeus.code.ui.theme.ZeusThemeMode
@@ -169,13 +171,17 @@ import java.util.Calendar
 import java.util.Date
 
 @Composable
-fun ZeusApp(viewModel: MainViewModel, agentViewModel: BackgroundAgentViewModel) {
+fun ZeusApp(
+    viewModel: MainViewModel,
+    agentViewModel: BackgroundAgentViewModel,
+    localAgentViewModel: LocalAgentViewModel
+) {
     val state by viewModel.state.collectAsState()
     ZeusTheme(mode = state.themeMode) {
         when {
             state.booting -> SplashScreen()
             !state.authenticated && !state.offlineMode -> LoginScreen(state, viewModel)
-            else -> MainShell(state, viewModel, agentViewModel)
+            else -> MainShell(state, viewModel, agentViewModel, localAgentViewModel)
         }
     }
 }
@@ -307,8 +313,14 @@ private sealed interface WorkspaceRoute {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun MainShell(state: ZeusState, viewModel: MainViewModel, agentViewModel: BackgroundAgentViewModel) {
+private fun MainShell(
+    state: ZeusState,
+    viewModel: MainViewModel,
+    agentViewModel: BackgroundAgentViewModel,
+    localAgentViewModel: LocalAgentViewModel
+) {
     val agentState by agentViewModel.state.collectAsState()
+    val localState by localAgentViewModel.state.collectAsState()
     var selectedTab by rememberSaveable { mutableStateOf(MainTab.AGENT.name) }
     val tab = MainTab.valueOf(selectedTab)
     var standaloneTool by rememberSaveable { mutableStateOf<String?>(null) }
@@ -340,10 +352,17 @@ private fun MainShell(state: ZeusState, viewModel: MainViewModel, agentViewModel
             agentViewModel.dismissMessage()
         }
     }
+    LaunchedEffect(localState.message) {
+        localState.message?.let {
+            snackbar.showSnackbar(it)
+            localAgentViewModel.dismissMessage()
+        }
+    }
 
     val standalone = standaloneTool != null ||
         route != WorkspaceRoute.List ||
         (tab == MainTab.AGENT && agentState.selectedSession != null) ||
+        (tab == MainTab.LOCAL && localState.selectedTaskId != null) ||
         (tab == MainTab.GITHUB && state.selectedRepo != null)
 
     // Hierarchical back handling for every sub-route.
@@ -353,10 +372,12 @@ private fun MainShell(state: ZeusState, viewModel: MainViewModel, agentViewModel
     BackHandler(enabled = route == WorkspaceRoute.Detail) { viewModel.closeWorkspace() }
     BackHandler(enabled = tab == MainTab.GITHUB && state.selectedRepo != null) { viewModel.closeRepository() }
     BackHandler(enabled = tab == MainTab.AGENT && agentState.selectedSession != null) { agentViewModel.closeSession() }
+    BackHandler(enabled = tab == MainTab.LOCAL && localState.selectedTaskId != null) { localAgentViewModel.closeTask() }
 
     val refreshAction: (() -> Unit)? = when {
         standaloneTool != null -> null
         tab == MainTab.AGENT -> ({ agentViewModel.refresh() })
+        tab == MainTab.LOCAL -> ({ localAgentViewModel.refresh() })
         tab == MainTab.GITHUB && state.selectedRepo != null -> viewModel::refreshSelectedRepository
         tab == MainTab.GITHUB -> viewModel::refreshAccount
         tab == MainTab.WORKSPACES && route is WorkspaceRoute.Detail -> viewModel::refreshWorkspace
@@ -412,7 +433,7 @@ private fun MainShell(state: ZeusState, viewModel: MainViewModel, agentViewModel
                             containerColor = MaterialTheme.colorScheme.background
                         )
                     )
-                    if (state.busy || agentState.busy) {
+                    if (state.busy || agentState.busy || localState.busy) {
                         LinearProgressIndicator(Modifier.fillMaxWidth())
                     }
                 }
@@ -494,6 +515,14 @@ private fun MainShell(state: ZeusState, viewModel: MainViewModel, agentViewModel
                         },
                         onCloneBranch = { url, name, branch ->
                             viewModel.cloneUrl(url, name, branch)
+                            selectedTab = MainTab.WORKSPACES.name
+                        }
+                    )
+                    MainTab.LOCAL -> LocalAgentScreen(
+                        viewModel = localAgentViewModel,
+                        workspaces = state.workspaces,
+                        onOpenWorkspace = { workspace ->
+                            viewModel.selectWorkspace(workspace)
                             selectedTab = MainTab.WORKSPACES.name
                         }
                     )
@@ -2604,12 +2633,14 @@ private fun ConfirmDialog(
 
 private fun tabTitle(tab: MainTab) = when (tab) {
     MainTab.AGENT -> "Agent"
+    MainTab.LOCAL -> "Local"
     MainTab.WORKSPACES -> "Workspaces"
     MainTab.GITHUB -> "GitHub"
 }
 
 private fun tabIcon(tab: MainTab) = when (tab) {
     MainTab.AGENT -> Icons.Rounded.AutoAwesome
+    MainTab.LOCAL -> Icons.Rounded.Terminal
     MainTab.WORKSPACES -> Icons.Rounded.Folder
     MainTab.GITHUB -> Icons.Rounded.Source
 }

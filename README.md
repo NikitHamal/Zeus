@@ -1,6 +1,6 @@
 # Zeus
 
-Zeus is a phone-first GitHub and NEBians Background Agent workbench built with Kotlin, Jetpack Compose and Material 3. It combines durable AI coding tasks, GitHub repository management, a local code workspace, a lightweight file editor, JGit-powered version control and an embedded terminal-like command surface.
+Zeus is a phone-first GitHub and NEBians Background Agent workbench built with Kotlin, Jetpack Compose and Material 3. It combines durable AI coding tasks, an on-device Local Mode coding agent, GitHub repository management, a local code workspace, a lightweight file editor, JGit-powered version control and an embedded terminal-like command surface.
 
 Package: `com.zeus.code`  
 OAuth callback registered in Android: `zeus://oauth`
@@ -18,6 +18,30 @@ OAuth callback registered in Android: `zeus://oauth`
 - Generate and download changed-files ZIP and patch artifacts
 - Push agent branches and open pull requests
 - Clone the agent branch directly into a Zeus workspace for local pull, edit, commit and push
+
+### Local Mode — on-device coding agent
+
+The **Local** tab runs the coding agent entirely on the phone. Tasks execute in a
+foreground service with a wake lock, so they keep running while Zeus is in the
+background or the screen is off — no cloud worker required.
+
+- Works on any Zeus workspace (cloned repo, imported folder or local project)
+- Agentic tool loop: `list_files`, `read_file`, `write_file`, `edit_file`,
+  `delete_path`, `search_files`, `run_command`, `git_status`, `git_diff`,
+  `git_commit` and `finish`
+- Strict workspace sandbox (canonical-path checks, bounded outputs, command timeout)
+- Live activity timeline, step progress, changed-file tracking and final summary
+- Stop and re-run tasks; history survives process death (JSON task store)
+- Model sources, selected per task:
+  - **NEBians providers** — the same community/official/BYOK catalog as the cloud
+    agent, relayed through the paired account (`/llm/chat`)
+  - **OpenCode Zen** — direct OpenAI-compatible access to free coding models with
+    a key from [opencode.ai/auth](https://opencode.ai/auth)
+  - **Custom providers** — any OpenAI-compatible endpoint (OpenRouter, Ollama,
+    Groq, Together, LM Studio, gateways); keys are sealed in Android Keystore and
+    never leave the device
+- Tool calls work over both native function calling and a transport-independent
+  text protocol, so even plain-text relays can drive the agent reliably
 
 ### GitHub
 
@@ -120,6 +144,11 @@ gradle :app:assembleRelease -POAUTH_CLIENT_ID=YOUR_CLIENT_ID -PBACKGROUND_AGENT_
 
 - `BackgroundAgentApi`: authenticated NEBians mobile API through OkHttp + kotlinx.serialization
 - `BackgroundAgentViewModel`: persistent device authorization, task lifecycle and live refresh
+- `local/LocalLlmClient`: one completion surface for NEBians relay + OpenAI-compatible endpoints (Zen/custom) with dual tool-call parsing
+- `local/LocalAgentEngine`: the on-device agentic loop with context compaction
+- `local/LocalAgentTools`: sandboxed workspace tools backed by JGit and `/system/bin/sh`
+- `local/LocalTaskStore`: durable task persistence shared by UI and service
+- `local/LocalAgentService`: foreground service executing queued local tasks in the background
 - `GitHubApi`: OAuth and GitHub REST calls through OkHttp + kotlinx.serialization
 - `SecureTokenStore`: AES-GCM token encryption backed by Android Keystore
 - `GitService`: JGit operations

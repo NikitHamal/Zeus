@@ -192,6 +192,24 @@ class GitService {
         output.toString(Charsets.UTF_8.name())
     }
 
+    /** Content of [path] at HEAD (empty when missing, new, or unreadable). */
+    suspend fun headFileContent(directory: File, path: String): String = withContext(Dispatchers.IO) {
+        require(File(directory, ".git").exists()) { "${directory.name} is not a Git repository." }
+        try {
+            Git.open(directory).use { git ->
+                val repository = git.repository
+                val head = repository.resolve(Constants.HEAD) ?: return@use ""
+                val commit = repository.parseCommit(head)
+                val walk = org.eclipse.jgit.treewalk.TreeWalk.forPath(repository, path, commit.tree.id)
+                    ?: return@use ""
+                repository.open(walk.getObjectId(0)).bytes.toString(Charsets.UTF_8)
+            }
+        } catch (error: Throwable) {
+            Log.e(TAG, "HEAD read failed for $path", error)
+            ""
+        }
+    }
+
     suspend fun setRemote(directory: File, url: String) = withGit(directory) { git ->
         val config = git.repository.config
         config.setString("remote", "origin", "url", normalizeRemote(url))

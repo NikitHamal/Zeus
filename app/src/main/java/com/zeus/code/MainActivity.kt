@@ -8,6 +8,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.zeus.code.ui.MainViewModel
 import com.zeus.code.ui.ZeusApp
 import com.zeus.code.ui.agent.BackgroundAgentViewModel
+import com.zeus.code.ui.local.LocalAgentViewModel
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -16,7 +17,8 @@ class MainActivity : ComponentActivity() {
         setContent {
             val viewModel: MainViewModel = viewModel()
             val agentViewModel: BackgroundAgentViewModel = viewModel()
-            ZeusApp(viewModel, agentViewModel)
+            val localAgentViewModel: LocalAgentViewModel = viewModel()
+            ZeusApp(viewModel, agentViewModel, localAgentViewModel)
         }
     }
 }
